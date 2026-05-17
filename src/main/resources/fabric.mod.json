@@ -2,8 +2,8 @@
 	"schemaVersion": 1,
 	"id": "blumdlc",
 	"version": "${version}",
-	"name": "BlumDLC",
-	"description": "",
+	"name": "Blum",
+	"description": "Blum client",
 	"authors": [
 		"sxmurxy"
 	],
@@ -13,6 +13,9 @@
 	"entrypoints": {
 		"main": [
 			"dev.blumdlc.client.BlumDLC"
+		],
+		"client": [
+			"dev.blumdlc.client.BlumDLCClient"
 		]
 	},
 	"mixins": [],
