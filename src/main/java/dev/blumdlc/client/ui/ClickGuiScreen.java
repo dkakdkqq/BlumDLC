@@ -606,6 +606,11 @@ public final class ClickGuiScreen extends Screen {
 
 	private float drawMode(Matrix4f matrix, MsdfFont font, ModeSetting s,
 			float x, float y, float w, float a, int mouseX, int mouseY) {
+		// Expanded mode: always-visible radio list (like MultiSetting but single-select)
+		if (s.expanded) {
+			return drawModeExpanded(matrix, font, s, x, y, w, a, mouseX, mouseY);
+		}
+
 		float h = 16.0f;
 		boolean hovered = isInside(mouseX, mouseY, x, y, w, h);
 		boolean open = (openDropdown == s);
@@ -629,6 +634,37 @@ public final class ClickGuiScreen extends Screen {
 		}
 
 		return y + h + 2.0f;
+	}
+
+	/** Draws an expanded (always-visible) radio selector for a ModeSetting. */
+	private float drawModeExpanded(Matrix4f matrix, MsdfFont font, ModeSetting s,
+			float x, float y, float w, float a, int mouseX, int mouseY) {
+		float rowH = 14.0f;
+		float rowGap = 3.0f;
+		float cy = y;
+		String selected = s.get();
+		for (String mode : s.modes) {
+			boolean isSelected = mode.equals(selected);
+			boolean hovered = isInside(mouseX, mouseY, x, cy, w, rowH);
+
+			if (isSelected) {
+				UIRender.rectGradientH(matrix, x, cy, w, rowH, 5.0f,
+					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, a),
+					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO,   a));
+			} else {
+				UIRender.rect(matrix, x, cy, w, rowH, 5.0f,
+					ColorUtil.multiplyAlpha(hovered ? Theme.CARD_HOVER : Theme.CARD_BG, a));
+				UIRender.border(matrix, x, cy, w, rowH, 5.0f, 1.0f,
+					ColorUtil.multiplyAlpha(Theme.CARD_BORDER, 0.5f * a));
+			}
+
+			int textColor = isSelected ? 0xFFFFFFFF : Theme.TEXT_SECONDARY;
+			UIRender.text(matrix, font, mode, x + 8.0f, cy + 3.5f, 7.0f,
+				ColorUtil.multiplyAlpha(textColor, a), 0.04f);
+
+			cy += rowH + rowGap;
+		}
+		return cy;
 	}
 
 	private void drawDropdownOverlay(Matrix4f matrix, MsdfFont font, float a, int mouseX, int mouseY) {
@@ -876,13 +912,28 @@ public final class ClickGuiScreen extends Screen {
 				cy = controlY + 22.0f + POPUP_ROW_GAP;
 
 			} else if (s instanceof ModeSetting ms) {
-				float h = 16.0f;
-				if (isInside(mouseX, mouseY, contentX, controlY, contentW, h) && button == 0) {
-					// Toggle the dropdown for this setting.
-					openDropdown = (openDropdown == ms) ? null : ms;
-					return true;
+				if (ms.expanded) {
+					// Expanded radio list: click on a row to select it
+					float rowH = 14.0f;
+					float rowGap = 3.0f;
+					float ry = controlY;
+					for (String mode : ms.modes) {
+						if (isInside(mouseX, mouseY, contentX, ry, contentW, rowH) && button == 0) {
+							ms.set(mode);
+							return true;
+						}
+						ry += rowH + rowGap;
+					}
+					cy = ry + POPUP_ROW_GAP;
+				} else {
+					float h = 16.0f;
+					if (isInside(mouseX, mouseY, contentX, controlY, contentW, h) && button == 0) {
+						// Toggle the dropdown for this setting.
+						openDropdown = (openDropdown == ms) ? null : ms;
+						return true;
+					}
+					cy = controlY + h + 2.0f + POPUP_ROW_GAP;
 				}
-				cy = controlY + h + 2.0f + POPUP_ROW_GAP;
 
 			} else if (s instanceof MultiSetting mu) {
 				float rowH = 14.0f;

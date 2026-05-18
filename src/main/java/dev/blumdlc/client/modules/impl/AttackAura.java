@@ -73,7 +73,7 @@ public final class AttackAura extends Module {
 		this.range  = new NumberSetting("Range",  4.5, 3.0, 6.0, 0.1);
 		this.vision = new NumberSetting("Vision", 4.0, 2.5, 6.0, 0.1);
 
-		this.rotations = new ModeSetting("Rotations", "SpookyTime",
+		this.rotations = new ModeSetting("Rotations", "SpookyTime", true,
 			"SpookyTime", "HolyWorld", "ReallyWorld", "FunTime");
 
 		this.targets = new MultiSetting("Target",
