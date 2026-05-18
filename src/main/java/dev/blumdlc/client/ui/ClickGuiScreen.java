@@ -182,10 +182,6 @@ public final class ClickGuiScreen extends Screen {
 	private void drawPanel(Matrix4f matrix, MsdfFont font,
 			float x, float y, float w, float h, float open, int mouseX, int mouseY) {
 
-		// Blur only behind the panel (not fullscreen)
-		UIRender.blur(matrix, x, y, w, h, 14.0f, 12.0f * open,
-			ColorUtil.withAlpha(0xFFFFFFFF, open));
-
 		// Panel base + soft outer accent ring
 		UIRender.rect(matrix, x, y, w, h, 14.0f, ColorUtil.multiplyAlpha(Theme.PANEL_BG, open));
 		UIRender.border(matrix, x, y, w, h, 14.0f, 1.0f,
