@@ -3,6 +3,8 @@ package dev.blumdlc.client.modules;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.joml.Matrix4f;
+
 import dev.blumdlc.client.settings.Setting;
 
 public class Module {
@@ -52,6 +54,18 @@ public class Module {
 	}
 
 	public void onTick() {
+	}
+
+	/**
+	 * Called once per frame from the HUD render pass, after the world has
+	 * been drawn but before the vanilla HUD. Modules that draw screen-space
+	 * overlays (TargetESP, HUDs, ...) implement this.
+	 *
+	 * @param matrix       the HUD's position matrix (already scaled and at the
+	 *                     correct depth)
+	 * @param tickDelta    fractional progress of the current tick (0..1)
+	 */
+	public void onRender(Matrix4f matrix, float tickDelta) {
 	}
 
 }
