@@ -26,16 +26,16 @@ import net.minecraft.text.Text;
 public final class ClickGuiScreen extends Screen {
 
 	// --- Panel geometry ---
-	private static final float PANEL_W = 580.0f;
-	private static final float PANEL_H = 360.0f;
-	private static final float SIDEBAR_W = 160.0f;
-	private static final float CARD_W = 195.0f;
-	private static final float CARD_H = 56.0f;
-	private static final float CARD_GAP_X = 10.0f;
-	private static final float CARD_GAP_Y = 10.0f;
-	private static final float CARD_AREA_PAD_X = 20.0f;
-	private static final float CARD_AREA_PAD_TOP = 56.0f;   // below the search bar
-	private static final float CARD_AREA_PAD_BOTTOM = 14.0f;
+	private static final float PANEL_W = 460.0f;
+	private static final float PANEL_H = 290.0f;
+	private static final float SIDEBAR_W = 130.0f;
+	private static final float CARD_W = 152.0f;
+	private static final float CARD_H = 48.0f;
+	private static final float CARD_GAP_X = 8.0f;
+	private static final float CARD_GAP_Y = 8.0f;
+	private static final float CARD_AREA_PAD_X = 14.0f;
+	private static final float CARD_AREA_PAD_TOP = 46.0f;   // below the search bar
+	private static final float CARD_AREA_PAD_BOTTOM = 10.0f;
 	private static final int   CARDS_PER_ROW = 2;
 
 	// --- Animations: panel ---
@@ -45,7 +45,7 @@ public final class ClickGuiScreen extends Screen {
 	// --- Sidebar state ---
 	private Category selectedCategory = Category.COMBAT;
 	private final Animation selectorY      = new Animation(0.0f,   320, Easing.EASE_OUT_EXPO);
-	private final Animation selectorHeight = new Animation(28.0f,  320, Easing.EASE_OUT_EXPO);
+	private final Animation selectorHeight = new Animation(24.0f,  320, Easing.EASE_OUT_EXPO);
 	private final Animation[] categoryHover = new Animation[Category.values().length];
 	private final Animation quitHover      = new Animation(0.0f, 180, Easing.EASE_OUT_CUBIC);
 
@@ -115,16 +115,16 @@ public final class ClickGuiScreen extends Screen {
 		float y = categoryRowY(idx);
 		if (immediate) {
 			selectorY.setImmediate(y);
-			selectorHeight.setImmediate(28.0f);
+			selectorHeight.setImmediate(24.0f);
 		} else {
 			selectorY.setTarget(y);
-			selectorHeight.setTarget(28.0f);
+			selectorHeight.setTarget(24.0f);
 		}
 	}
 
 	private static float categoryRowY(int index) {
-		// First row position relative to panel; sidebar header is ~80px tall
-		return 80.0f + index * 30.0f;
+		// First row position relative to panel; sidebar header is ~62px tall
+		return 62.0f + index * 26.0f;
 	}
 
 	private void clampScroll() {
@@ -160,10 +160,9 @@ public final class ClickGuiScreen extends Screen {
 		float open = openAnim.getValue();        // 0..1
 		float slide = slideAnim.getValue();      // 40..0
 
-		// Backdrop dim + blur, fading in with the panel
+		// Backdrop dim (no fullscreen blur — blur only behind the panel)
 		int dim = ColorUtil.multiplyAlpha(Theme.DIM, open);
 		UIRender.rect(matrix, 0, 0, this.width, this.height, 0, dim);
-		UIRender.blur(matrix, 0, 0, this.width, this.height, 0, 9.0f * open, ColorUtil.withAlpha(0xFFFFFFFF, open));
 
 		// Panel placement (centered)
 		float panelX = (this.width  - PANEL_W) * 0.5f;
@@ -182,6 +181,10 @@ public final class ClickGuiScreen extends Screen {
 
 	private void drawPanel(Matrix4f matrix, MsdfFont font,
 			float x, float y, float w, float h, float open, int mouseX, int mouseY) {
+
+		// Blur only behind the panel (not fullscreen)
+		UIRender.blur(matrix, x, y, w, h, 14.0f, 12.0f * open,
+			ColorUtil.withAlpha(0xFFFFFFFF, open));
 
 		// Panel base + soft outer accent ring
 		UIRender.rect(matrix, x, y, w, h, 14.0f, ColorUtil.multiplyAlpha(Theme.PANEL_BG, open));
@@ -217,31 +220,31 @@ public final class ClickGuiScreen extends Screen {
 		UIRender.rect(matrix, x, y, w, h, 14.0f, ColorUtil.multiplyAlpha(Theme.SIDEBAR_BG, open));
 
 		// Brand: gradient circular badge + "Blum" text
-		float logoSize = 26.0f;
-		float logoX = x + 18.0f;
-		float logoY = y + 22.0f;
+		float logoSize = 22.0f;
+		float logoX = x + 14.0f;
+		float logoY = y + 16.0f;
 		// outer glow (rect + border)
-		UIRender.rect(matrix, logoX, logoY, logoSize, logoSize, 13.0f,
+		UIRender.rect(matrix, logoX, logoY, logoSize, logoSize, 11.0f,
 			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, 0.18f * open));
 		// gradient core
-		UIRender.rectGradientV(matrix, logoX + 3, logoY + 3, logoSize - 6, logoSize - 6, 10.0f,
+		UIRender.rectGradientV(matrix, logoX + 3, logoY + 3, logoSize - 6, logoSize - 6, 8.0f,
 			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, open),
 			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO, open));
 		// inner highlight pixel
-		UIRender.rect(matrix, logoX + 7, logoY + 6, 4, 2, 1.0f,
+		UIRender.rect(matrix, logoX + 6, logoY + 5, 3, 2, 1.0f,
 			ColorUtil.withAlpha(0xFFFFFFFF, 0.6f * open));
 
-		UIRender.text(matrix, font, "Blum", x + 52.0f, logoY + 8.0f,
-			14.0f, ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, open), 0.06f);
+		UIRender.text(matrix, font, "Blum", x + 42.0f, logoY + 6.0f,
+			12.0f, ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, open), 0.06f);
 
 		// Section label
-		UIRender.text(matrix, font, "Modules", x + 18.0f, y + 60.0f,
-			8.0f, ColorUtil.multiplyAlpha(Theme.TEXT_MUTED, open));
+		UIRender.text(matrix, font, "Modules", x + 14.0f, y + 48.0f,
+			7.0f, ColorUtil.multiplyAlpha(Theme.TEXT_MUTED, open));
 
 		// Animated selector (gradient pill)
 		float selY = y + selectorY.getValue();
 		float selH = selectorHeight.getValue();
-		UIRender.rectGradientH(matrix, x + 12.0f, selY, w - 24.0f, selH, 8.0f,
+		UIRender.rectGradientH(matrix, x + 10.0f, selY, w - 20.0f, selH, 7.0f,
 			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, open),
 			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO, open));
 
@@ -250,12 +253,12 @@ public final class ClickGuiScreen extends Screen {
 		for (int i = 0; i < cats.length; i++) {
 			float rowY = y + categoryRowY(i);
 			boolean selected = selectedCategory == cats[i];
-			boolean hovered = isInside(mouseX, mouseY, x + 12.0f, rowY, w - 24.0f, 28.0f);
+			boolean hovered = isInside(mouseX, mouseY, x + 10.0f, rowY, w - 20.0f, 24.0f);
 			categoryHover[i].setTarget(hovered && !selected ? 1.0f : 0.0f);
 
 			float hov = categoryHover[i].getValue();
 			if (!selected && hov > 0.001f) {
-				UIRender.rect(matrix, x + 12.0f, rowY, w - 24.0f, 28.0f, 8.0f,
+				UIRender.rect(matrix, x + 10.0f, rowY, w - 20.0f, 24.0f, 7.0f,
 					ColorUtil.multiplyAlpha(0x10FFFFFF, hov * open));
 			}
 
@@ -263,28 +266,28 @@ public final class ClickGuiScreen extends Screen {
 				? ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, open)
 				: ColorUtil.lerp(Theme.TEXT_SECONDARY, Theme.TEXT_PRIMARY, hov * 0.6f);
 			textColor = ColorUtil.multiplyAlpha(textColor, open);
-			UIRender.text(matrix, font, cats[i].displayName, x + 24.0f, rowY + 9.0f, 9.5f, textColor);
+			UIRender.text(matrix, font, cats[i].displayName, x + 20.0f, rowY + 7.0f, 8.5f, textColor);
 		}
 
 		// "Others" divider label
-		UIRender.text(matrix, font, "Others", x + 18.0f, y + 226.0f, 8.0f,
+		UIRender.text(matrix, font, "Others", x + 14.0f, y + 196.0f, 7.0f,
 			ColorUtil.multiplyAlpha(Theme.TEXT_MUTED, open));
-		UIRender.text(matrix, font, "Configs", x + 24.0f, y + 245.0f, 9.5f,
+		UIRender.text(matrix, font, "Configs", x + 20.0f, y + 212.0f, 8.5f,
 			ColorUtil.multiplyAlpha(Theme.TEXT_SECONDARY, open));
-		UIRender.text(matrix, font, "Themes",  x + 24.0f, y + 268.0f, 9.5f,
+		UIRender.text(matrix, font, "Themes",  x + 20.0f, y + 232.0f, 8.5f,
 			ColorUtil.multiplyAlpha(Theme.TEXT_SECONDARY, open));
 
 		// Quit row
-		float quitY = y + h - 38.0f;
-		boolean quitHovered = isInside(mouseX, mouseY, x + 12.0f, quitY, w - 24.0f, 26.0f);
+		float quitY = y + h - 32.0f;
+		boolean quitHovered = isInside(mouseX, mouseY, x + 10.0f, quitY, w - 20.0f, 22.0f);
 		quitHover.setTarget(quitHovered ? 1.0f : 0.0f);
 		float qh = quitHover.getValue();
 		if (qh > 0.001f) {
-			UIRender.rect(matrix, x + 12.0f, quitY, w - 24.0f, 26.0f, 8.0f,
+			UIRender.rect(matrix, x + 10.0f, quitY, w - 20.0f, 22.0f, 7.0f,
 				ColorUtil.multiplyAlpha(Theme.DANGER, 0.16f * qh * open));
 		}
 		int quitColor = ColorUtil.lerp(Theme.TEXT_SECONDARY, Theme.DANGER, qh);
-		UIRender.text(matrix, font, "Quit", x + 24.0f, quitY + 8.0f, 9.5f,
+		UIRender.text(matrix, font, "Quit", x + 20.0f, quitY + 6.0f, 8.5f,
 			ColorUtil.multiplyAlpha(quitColor, open));
 	}
 
@@ -296,10 +299,10 @@ public final class ClickGuiScreen extends Screen {
 			float x, float y, float w, float h, float open, int mouseX, int mouseY) {
 
 		// Search bar
-		float searchX = x + 18.0f;
-		float searchY = y + 18.0f;
-		float searchW = w - 36.0f;
-		float searchH = 26.0f;
+		float searchX = x + 14.0f;
+		float searchY = y + 14.0f;
+		float searchW = w - 28.0f;
+		float searchH = 22.0f;
 		float focus = searchFocus.getValue();
 		int focusBorder = ColorUtil.lerp(0x33FFFFFF, Theme.ACCENT, focus);
 
@@ -312,7 +315,7 @@ public final class ClickGuiScreen extends Screen {
 		int searchColor = searchText.isEmpty()
 			? Theme.TEXT_MUTED
 			: Theme.TEXT_PRIMARY;
-		UIRender.text(matrix, font, displayText, searchX + 12.0f, searchY + 8.0f, 9.0f,
+		UIRender.text(matrix, font, displayText, searchX + 10.0f, searchY + 7.0f, 8.0f,
 			ColorUtil.multiplyAlpha(searchColor, open));
 
 		// Caret
@@ -322,14 +325,14 @@ public final class ClickGuiScreen extends Screen {
 			caretVisible = !caretVisible;
 		}
 		if (searchActive && caretVisible) {
-			float caretX = searchX + 12.0f + UIRender.textWidth(font, searchText, 9.0f) + 1.0f;
-			UIRender.rect(matrix, caretX, searchY + 6.0f, 1.0f, searchH - 12.0f, 0.5f,
+			float caretX = searchX + 10.0f + UIRender.textWidth(font, searchText, 8.0f) + 1.0f;
+			UIRender.rect(matrix, caretX, searchY + 5.0f, 1.0f, searchH - 10.0f, 0.5f,
 				ColorUtil.multiplyAlpha(Theme.ACCENT, open));
 		}
 
 		// Folder + gear icons (drawn as rounded rects, no textures)
-		drawIcon(matrix, x + w - 50.0f, searchY + 6.0f, 14.0f, ColorUtil.multiplyAlpha(0x80FFFFFF, open));
-		drawIcon(matrix, x + w - 30.0f, searchY + 6.0f, 14.0f, ColorUtil.multiplyAlpha(0x80FFFFFF, open));
+		drawIcon(matrix, x + w - 44.0f, searchY + 4.0f, 12.0f, ColorUtil.multiplyAlpha(0x80FFFFFF, open));
+		drawIcon(matrix, x + w - 26.0f, searchY + 4.0f, 12.0f, ColorUtil.multiplyAlpha(0x80FFFFFF, open));
 
 		// Cards grid
 		drawCards(matrix, font, x, y, w, h, open, mouseX, mouseY);
@@ -419,17 +422,17 @@ public final class ClickGuiScreen extends Screen {
 
 			// Title + small status link icon
 			int titleColor = ColorUtil.lerp(Theme.TEXT_PRIMARY, 0xFFFFFFFF, activeT);
-			UIRender.text(matrix, font, module.name, cardX + 12.0f, cy + 10.0f, 10.5f,
-				ColorUtil.multiplyAlpha(titleColor, cardAlpha), 0.06f);
+			UIRender.text(matrix, font, module.name, cardX + 10.0f, cy + 8.0f, 9.0f,
+				ColorUtil.multiplyAlpha(titleColor, cardAlpha), 0.05f);
 
 			// Settings/info dots
-			float dotsX = cardX + 12.0f + UIRender.textWidth(font, module.name, 10.5f) + 8.0f;
-			drawTinyIcons(matrix, dotsX, cy + 12.5f,
+			float dotsX = cardX + 10.0f + UIRender.textWidth(font, module.name, 9.0f) + 6.0f;
+			drawTinyIcons(matrix, dotsX, cy + 10.0f,
 				ColorUtil.multiplyAlpha(0xFFFFFFFF, 0.65f * cardAlpha));
 
 			// Description
 			int descColor = ColorUtil.lerp(Theme.TEXT_SECONDARY, 0xFFE9D2F2, activeT);
-			UIRender.text(matrix, font, module.description, cardX + 12.0f, cy + 26.0f, 7.5f,
+			UIRender.text(matrix, font, module.description, cardX + 10.0f, cy + 22.0f, 6.5f,
 				ColorUtil.multiplyAlpha(descColor, cardAlpha), 0.04f);
 		}
 
@@ -471,7 +474,7 @@ public final class ClickGuiScreen extends Screen {
 		Category[] cats = Category.values();
 		for (int i = 0; i < cats.length; i++) {
 			float rowY = panelY + categoryRowY(i);
-			if (isInside(mouseX, mouseY, panelX + 12.0f, rowY, SIDEBAR_W - 24.0f, 28.0f)) {
+			if (isInside(mouseX, mouseY, panelX + 10.0f, rowY, SIDEBAR_W - 20.0f, 24.0f)) {
 				if (selectedCategory != cats[i]) {
 					selectedCategory = cats[i];
 					updateSelectorAnim(false);
@@ -482,17 +485,17 @@ public final class ClickGuiScreen extends Screen {
 		}
 
 		// Quit
-		float quitY = panelY + PANEL_H - 38.0f;
-		if (isInside(mouseX, mouseY, panelX + 12.0f, quitY, SIDEBAR_W - 24.0f, 26.0f)) {
+		float quitY = panelY + PANEL_H - 32.0f;
+		if (isInside(mouseX, mouseY, panelX + 10.0f, quitY, SIDEBAR_W - 20.0f, 22.0f)) {
 			this.close();
 			return true;
 		}
 
 		// Search bar
-		float searchX = panelX + SIDEBAR_W + 18.0f;
-		float searchY = panelY + 18.0f;
-		float searchW = PANEL_W - SIDEBAR_W - 36.0f;
-		boolean inSearch = isInside(mouseX, mouseY, searchX, searchY, searchW, 26.0f);
+		float searchX = panelX + SIDEBAR_W + 14.0f;
+		float searchY = panelY + 14.0f;
+		float searchW = PANEL_W - SIDEBAR_W - 28.0f;
+		boolean inSearch = isInside(mouseX, mouseY, searchX, searchY, searchW, 22.0f);
 		searchActive = inSearch;
 		searchFocus.setTarget(inSearch ? 1.0f : 0.0f);
 
