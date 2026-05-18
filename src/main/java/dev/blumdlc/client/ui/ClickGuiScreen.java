@@ -9,6 +9,11 @@ import dev.blumdlc.client.BlumDLC;
 import dev.blumdlc.client.modules.Category;
 import dev.blumdlc.client.modules.Module;
 import dev.blumdlc.client.msdf.MsdfFont;
+import dev.blumdlc.client.settings.BooleanSetting;
+import dev.blumdlc.client.settings.ModeSetting;
+import dev.blumdlc.client.settings.MultiSetting;
+import dev.blumdlc.client.settings.NumberSetting;
+import dev.blumdlc.client.settings.Setting;
 import dev.blumdlc.client.ui.animation.Animation;
 import dev.blumdlc.client.ui.animation.Easing;
 import dev.blumdlc.client.ui.util.ColorUtil;
@@ -19,24 +24,30 @@ import net.minecraft.text.Text;
 /**
  * Celestial-style ClickGUI rendered exclusively through the project's Builder API.
  *
- * Layout (panel local coords):
- *   sidebar  : x = 0..160      (logo + brand, category list, "Quit")
- *   main     : x = 160..PANEL  (search bar, scrollable card grid)
+ * Layout:
+ *   sidebar  (categories) | main area (search + 4-column card grid) | settings popup (right click)
  */
 public final class ClickGuiScreen extends Screen {
 
 	// --- Panel geometry ---
-	private static final float PANEL_W = 460.0f;
-	private static final float PANEL_H = 290.0f;
+	private static final float PANEL_W = 620.0f;
+	private static final float PANEL_H = 320.0f;
 	private static final float SIDEBAR_W = 130.0f;
-	private static final float CARD_W = 152.0f;
+	private static final float CARD_W = 108.0f;
 	private static final float CARD_H = 48.0f;
-	private static final float CARD_GAP_X = 8.0f;
-	private static final float CARD_GAP_Y = 8.0f;
-	private static final float CARD_AREA_PAD_X = 14.0f;
-	private static final float CARD_AREA_PAD_TOP = 46.0f;   // below the search bar
+	private static final float CARD_GAP_X = 6.0f;
+	private static final float CARD_GAP_Y = 6.0f;
+	private static final float CARD_AREA_PAD_X = 12.0f;
+	private static final float CARD_AREA_PAD_TOP = 46.0f;
 	private static final float CARD_AREA_PAD_BOTTOM = 10.0f;
-	private static final int   CARDS_PER_ROW = 2;
+	private static final int   CARDS_PER_ROW = 4;
+
+	// --- Settings popup ---
+	private static final float POPUP_W = 220.0f;
+	private static final float POPUP_GAP = 8.0f;
+	private static final float POPUP_PAD_X = 14.0f;
+	private static final float POPUP_HEADER_H = 36.0f;
+	private static final float POPUP_ROW_GAP = 8.0f;
 
 	// --- Animations: panel ---
 	private final Animation openAnim   = new Animation(0.0f, 360, Easing.EASE_OUT_QUINT);
@@ -44,8 +55,8 @@ public final class ClickGuiScreen extends Screen {
 
 	// --- Sidebar state ---
 	private Category selectedCategory = Category.COMBAT;
-	private final Animation selectorY      = new Animation(0.0f,   320, Easing.EASE_OUT_EXPO);
-	private final Animation selectorHeight = new Animation(24.0f,  320, Easing.EASE_OUT_EXPO);
+	private final Animation selectorY      = new Animation(0.0f,  320, Easing.EASE_OUT_EXPO);
+	private final Animation selectorHeight = new Animation(24.0f, 320, Easing.EASE_OUT_EXPO);
 	private final Animation[] categoryHover = new Animation[Category.values().length];
 	private final Animation quitHover      = new Animation(0.0f, 180, Easing.EASE_OUT_CUBIC);
 
@@ -68,6 +79,11 @@ public final class ClickGuiScreen extends Screen {
 	private float scrollTarget = 0.0f;
 	private float maxScroll = 0.0f;
 
+	// --- Settings popup state ---
+	private Module settingsModule = null;
+	private final Animation settingsAnim = new Animation(0.0f, 320, Easing.EASE_OUT_EXPO);
+	private NumberSetting draggingSlider = null;
+
 	public ClickGuiScreen() {
 		super(Text.literal("Blum"));
 		for (int i = 0; i < categoryHover.length; i++) {
@@ -86,6 +102,11 @@ public final class ClickGuiScreen extends Screen {
 
 	private void rebuildVisible(boolean stagger) {
 		this.visibleModules = BlumDLC.MODULES.search(selectedCategory, searchText);
+		// Close settings popup if its module disappears from view
+		if (settingsModule != null && !visibleModules.contains(settingsModule)) {
+			settingsModule = null;
+			settingsAnim.setTarget(0.0f);
+		}
 
 		this.cardHover.clear();
 		this.cardEnter.clear();
@@ -95,7 +116,7 @@ public final class ClickGuiScreen extends Screen {
 			cardHover.add(new Animation(0.0f, 160, Easing.EASE_OUT_CUBIC));
 			Animation enter = new Animation(0.0f, 380, Easing.EASE_OUT_QUINT);
 			if (stagger) {
-				enter.setTarget(1.0f, 30L * i);
+				enter.setTarget(1.0f, 25L * i);
 			} else {
 				enter.setImmediate(1.0f);
 			}
@@ -123,7 +144,6 @@ public final class ClickGuiScreen extends Screen {
 	}
 
 	private static float categoryRowY(int index) {
-		// First row position relative to panel; sidebar header is ~62px tall
 		return 62.0f + index * 26.0f;
 	}
 
@@ -141,12 +161,9 @@ public final class ClickGuiScreen extends Screen {
 		return false;
 	}
 
-	/**
-	 * Disable the vanilla screen-background blur. We draw our own dim layer in {@link #render}.
-	 */
 	@Override
 	public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
-		// no-op
+		// Disable vanilla blur; we draw our own dim layer in render().
 	}
 
 	@Override
@@ -165,18 +182,16 @@ public final class ClickGuiScreen extends Screen {
 		Matrix4f matrix = context.getMatrices().peek().getPositionMatrix();
 		MsdfFont font = Fonts.BIKO.get();
 
-		float open = openAnim.getValue();        // 0..1
-		float slide = slideAnim.getValue();      // 40..0
+		float open = openAnim.getValue();
+		float slide = slideAnim.getValue();
 
-		// Backdrop dim (no fullscreen blur — blur only behind the panel)
 		int dim = ColorUtil.multiplyAlpha(Theme.DIM, open);
 		UIRender.rect(matrix, 0, 0, this.width, this.height, 0, dim);
 
-		// Panel placement (centered)
 		float panelX = (this.width  - PANEL_W) * 0.5f;
 		float panelY = (this.height - PANEL_H) * 0.5f + slide;
 
-		float scale = 0.96f + 0.04f * open;     // subtle zoom-in
+		float scale = 0.96f + 0.04f * open;
 		float scaledW = PANEL_W * scale;
 		float scaledH = PANEL_H * scale;
 		panelX += (PANEL_W - scaledW) * 0.5f;
@@ -184,34 +199,29 @@ public final class ClickGuiScreen extends Screen {
 
 		drawPanel(matrix, font, panelX, panelY, scaledW, scaledH, open, mouseX, mouseY);
 
+		// Settings popup (right of the panel)
+		float popupT = settingsAnim.getValue();
+		if (popupT > 0.001f && settingsModule != null) {
+			drawSettingsPopup(matrix, font, panelX, panelY, scaledW, scaledH, open, popupT, mouseX, mouseY);
+		}
+
 		super.render(context, mouseX, mouseY, deltaTicks);
 	}
 
 	private void drawPanel(Matrix4f matrix, MsdfFont font,
 			float x, float y, float w, float h, float open, int mouseX, int mouseY) {
 
-		// Panel base + soft outer accent ring
 		UIRender.rect(matrix, x, y, w, h, 14.0f, ColorUtil.multiplyAlpha(Theme.PANEL_BG, open));
 		UIRender.border(matrix, x, y, w, h, 14.0f, 1.0f,
 			ColorUtil.multiplyAlpha(Theme.PANEL_BORDER, open));
 
-		// Sidebar
-		float sbX = x;
-		float sbY = y;
 		float sbW = SIDEBAR_W * (w / PANEL_W);
-		float sbH = h;
-		drawSidebar(matrix, font, sbX, sbY, sbW, sbH, open, mouseX, mouseY);
+		drawSidebar(matrix, font, x, y, sbW, h, open, mouseX, mouseY);
 
-		// Vertical divider between sidebar and main
-		UIRender.rect(matrix, sbX + sbW, sbY + 12, 1.0f, sbH - 24,
+		UIRender.rect(matrix, x + sbW, y + 12, 1.0f, h - 24,
 			0.0f, ColorUtil.multiplyAlpha(Theme.DIVIDER, open));
 
-		// Main area
-		float mX = sbX + sbW;
-		float mY = sbY;
-		float mW = w - sbW;
-		float mH = sbH;
-		drawMain(matrix, font, mX, mY, mW, mH, open, mouseX, mouseY);
+		drawMain(matrix, font, x + sbW, y, w - sbW, h, open, mouseX, mouseY);
 	}
 
 	// ---------------------------------------------------------------------
@@ -223,36 +233,31 @@ public final class ClickGuiScreen extends Screen {
 
 		UIRender.rect(matrix, x, y, w, h, 14.0f, ColorUtil.multiplyAlpha(Theme.SIDEBAR_BG, open));
 
-		// Brand: gradient circular badge + "Blum" text
+		// Brand
 		float logoSize = 22.0f;
 		float logoX = x + 14.0f;
 		float logoY = y + 16.0f;
-		// outer glow (rect + border)
 		UIRender.rect(matrix, logoX, logoY, logoSize, logoSize, 11.0f,
 			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, 0.18f * open));
-		// gradient core
 		UIRender.rectGradientV(matrix, logoX + 3, logoY + 3, logoSize - 6, logoSize - 6, 8.0f,
 			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, open),
 			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO, open));
-		// inner highlight pixel
 		UIRender.rect(matrix, logoX + 6, logoY + 5, 3, 2, 1.0f,
 			ColorUtil.withAlpha(0xFFFFFFFF, 0.6f * open));
 
 		UIRender.text(matrix, font, "Blum", x + 42.0f, logoY + 6.0f,
 			12.0f, ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, open), 0.06f);
 
-		// Section label
 		UIRender.text(matrix, font, "Modules", x + 14.0f, y + 48.0f,
 			7.0f, ColorUtil.multiplyAlpha(Theme.TEXT_MUTED, open));
 
-		// Animated selector (gradient pill)
+		// Animated selector pill
 		float selY = y + selectorY.getValue();
 		float selH = selectorHeight.getValue();
 		UIRender.rectGradientH(matrix, x + 10.0f, selY, w - 20.0f, selH, 7.0f,
 			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, open),
 			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO, open));
 
-		// Category rows
 		Category[] cats = Category.values();
 		for (int i = 0; i < cats.length; i++) {
 			float rowY = y + categoryRowY(i);
@@ -272,14 +277,6 @@ public final class ClickGuiScreen extends Screen {
 			textColor = ColorUtil.multiplyAlpha(textColor, open);
 			UIRender.text(matrix, font, cats[i].displayName, x + 20.0f, rowY + 7.0f, 8.5f, textColor);
 		}
-
-		// "Others" divider label
-		UIRender.text(matrix, font, "Others", x + 14.0f, y + 196.0f, 7.0f,
-			ColorUtil.multiplyAlpha(Theme.TEXT_MUTED, open));
-		UIRender.text(matrix, font, "Configs", x + 20.0f, y + 212.0f, 8.5f,
-			ColorUtil.multiplyAlpha(Theme.TEXT_SECONDARY, open));
-		UIRender.text(matrix, font, "Themes",  x + 20.0f, y + 232.0f, 8.5f,
-			ColorUtil.multiplyAlpha(Theme.TEXT_SECONDARY, open));
 
 		// Quit row
 		float quitY = y + h - 32.0f;
@@ -302,7 +299,6 @@ public final class ClickGuiScreen extends Screen {
 	private void drawMain(Matrix4f matrix, MsdfFont font,
 			float x, float y, float w, float h, float open, int mouseX, int mouseY) {
 
-		// Search bar
 		float searchX = x + 14.0f;
 		float searchY = y + 14.0f;
 		float searchW = w - 28.0f;
@@ -316,13 +312,10 @@ public final class ClickGuiScreen extends Screen {
 			ColorUtil.multiplyAlpha(focusBorder, open));
 
 		String displayText = searchText.isEmpty() ? "Search" : searchText;
-		int searchColor = searchText.isEmpty()
-			? Theme.TEXT_MUTED
-			: Theme.TEXT_PRIMARY;
+		int searchColor = searchText.isEmpty() ? Theme.TEXT_MUTED : Theme.TEXT_PRIMARY;
 		UIRender.text(matrix, font, displayText, searchX + 10.0f, searchY + 7.0f, 8.0f,
 			ColorUtil.multiplyAlpha(searchColor, open));
 
-		// Caret
 		long now = System.currentTimeMillis();
 		if (now - lastBlinkSwap > 530L) {
 			lastBlinkSwap = now;
@@ -334,11 +327,9 @@ public final class ClickGuiScreen extends Screen {
 				ColorUtil.multiplyAlpha(Theme.ACCENT, open));
 		}
 
-		// Folder + gear icons (drawn as rounded rects, no textures)
 		drawIcon(matrix, x + w - 44.0f, searchY + 4.0f, 12.0f, ColorUtil.multiplyAlpha(0x80FFFFFF, open));
 		drawIcon(matrix, x + w - 26.0f, searchY + 4.0f, 12.0f, ColorUtil.multiplyAlpha(0x80FFFFFF, open));
 
-		// Cards grid
 		drawCards(matrix, font, x, y, w, h, open, mouseX, mouseY);
 	}
 
@@ -364,7 +355,6 @@ public final class ClickGuiScreen extends Screen {
 			float cx = originX + col * (CARD_W + CARD_GAP_X);
 			float cy = originY + row * (CARD_H + CARD_GAP_Y);
 
-			// Cull off-screen rows (with a margin)
 			if (cy + CARD_H < clipTop - 30.0f || cy > clipBottom + 30.0f) {
 				continue;
 			}
@@ -375,8 +365,8 @@ public final class ClickGuiScreen extends Screen {
 			Animation activeA = cardActive.get(i);
 			Animation flashA = cardClickFlash.get(i);
 
-			float enterT = enter.getValue();              // 0..1
-			float cardX = cx + (1.0f - enterT) * 14.0f;   // slide-in from left
+			float enterT = enter.getValue();
+			float cardX = cx + (1.0f - enterT) * 14.0f;
 			float cardAlpha = enterT * open;
 
 			boolean hovered = isInside(mouseX, mouseY, cardX, cy, CARD_W, CARD_H)
@@ -388,30 +378,24 @@ public final class ClickGuiScreen extends Screen {
 			float activeT = activeA.getValue();
 			float flashT = flashA.getValue();
 
-			// Base background
 			int bgInactive = ColorUtil.lerp(Theme.CARD_BG, Theme.CARD_HOVER, hoverT);
-			int bgActiveLeft  = Theme.CARD_ACTIVE_FROM;
-			int bgActiveRight = Theme.CARD_ACTIVE_TO;
 
-			// Card body: gradient when active, blended into hover bg when not
 			if (activeT < 0.999f) {
 				UIRender.rect(matrix, cardX, cy, CARD_W, CARD_H, 10.0f,
 					ColorUtil.multiplyAlpha(bgInactive, cardAlpha * (1.0f - activeT)));
 			}
 			if (activeT > 0.001f) {
 				UIRender.rectGradientH(matrix, cardX, cy, CARD_W, CARD_H, 10.0f,
-					ColorUtil.multiplyAlpha(bgActiveLeft,  cardAlpha * activeT),
-					ColorUtil.multiplyAlpha(bgActiveRight, cardAlpha * activeT));
+					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, cardAlpha * activeT),
+					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO,   cardAlpha * activeT));
 			}
 
-			// Hover lift: a soft top highlight
 			if (hoverT > 0.001f) {
 				UIRender.rectGradientV(matrix, cardX, cy, CARD_W, CARD_H * 0.5f, 10.0f,
 					ColorUtil.multiplyAlpha(0xFFFFFFFF, 0.05f * hoverT * cardAlpha),
 					0x00000000);
 			}
 
-			// Click flash ring
 			if (flashT > 0.001f && flashT < 0.999f) {
 				float ringAlpha = (1.0f - flashT) * 0.6f * cardAlpha;
 				UIRender.border(matrix, cardX - flashT * 2.0f, cy - flashT * 2.0f,
@@ -420,27 +404,34 @@ public final class ClickGuiScreen extends Screen {
 					ColorUtil.multiplyAlpha(Theme.ACCENT, ringAlpha));
 			}
 
-			// Card border (subtle)
-			UIRender.border(matrix, cardX, cy, CARD_W, CARD_H, 10.0f, 1.0f,
-				ColorUtil.multiplyAlpha(Theme.CARD_BORDER, 0.6f * (1.0f - activeT) * cardAlpha));
+			// Highlight ring when this card's settings popup is open
+			if (settingsModule == module) {
+				UIRender.border(matrix, cardX, cy, CARD_W, CARD_H, 10.0f, 1.5f,
+					ColorUtil.multiplyAlpha(Theme.ACCENT, 0.9f * cardAlpha));
+			} else {
+				UIRender.border(matrix, cardX, cy, CARD_W, CARD_H, 10.0f, 1.0f,
+					ColorUtil.multiplyAlpha(Theme.CARD_BORDER, 0.6f * (1.0f - activeT) * cardAlpha));
+			}
 
-			// Title + small status link icon
 			int titleColor = ColorUtil.lerp(Theme.TEXT_PRIMARY, 0xFFFFFFFF, activeT);
-			UIRender.text(matrix, font, module.name, cardX + 10.0f, cy + 8.0f, 9.0f,
+			UIRender.text(matrix, font, module.name, cardX + 9.0f, cy + 8.0f, 8.5f,
 				ColorUtil.multiplyAlpha(titleColor, cardAlpha), 0.05f);
 
-			// Settings/info dots
-			float dotsX = cardX + 10.0f + UIRender.textWidth(font, module.name, 9.0f) + 6.0f;
-			drawTinyIcons(matrix, dotsX, cy + 10.0f,
-				ColorUtil.multiplyAlpha(0xFFFFFFFF, 0.65f * cardAlpha));
-
-			// Description
+			// Description (clipped if too long visually)
 			int descColor = ColorUtil.lerp(Theme.TEXT_SECONDARY, 0xFFE9D2F2, activeT);
-			UIRender.text(matrix, font, module.description, cardX + 10.0f, cy + 22.0f, 6.5f,
+			UIRender.text(matrix, font, module.description, cardX + 9.0f, cy + 22.0f, 6.0f,
 				ColorUtil.multiplyAlpha(descColor, cardAlpha), 0.04f);
+
+			// Tiny "has settings" indicator
+			if (!module.settings.isEmpty()) {
+				float ix = cardX + CARD_W - 14.0f;
+				float iy = cy + 8.0f;
+				UIRender.rect(matrix, ix,        iy, 2.0f, 2.0f, 1.0f, ColorUtil.multiplyAlpha(0xFFFFFFFF, 0.55f * cardAlpha));
+				UIRender.rect(matrix, ix + 4.0f, iy, 2.0f, 2.0f, 1.0f, ColorUtil.multiplyAlpha(0xFFFFFFFF, 0.55f * cardAlpha));
+				UIRender.rect(matrix, ix + 8.0f, iy, 2.0f, 2.0f, 1.0f, ColorUtil.multiplyAlpha(0xFFFFFFFF, 0.55f * cardAlpha));
+			}
 		}
 
-		// Scrollbar
 		if (maxScroll > 0.5f) {
 			float trackX = x + w - 6.0f;
 			float trackY = y + CARD_AREA_PAD_TOP;
@@ -455,14 +446,170 @@ public final class ClickGuiScreen extends Screen {
 		}
 	}
 
-	private void drawTinyIcons(Matrix4f matrix, float x, float y, int color) {
-		// settings gear glyph (3 dots) + chain link glyph (two pills)
-		UIRender.rect(matrix, x,        y,     2.0f, 2.0f, 1.0f, color);
-		UIRender.rect(matrix, x + 4.0f, y,     2.0f, 2.0f, 1.0f, color);
-		UIRender.rect(matrix, x + 8.0f, y,     2.0f, 2.0f, 1.0f, color);
-		UIRender.rect(matrix, x + 14.0f, y - 1.0f, 5.0f, 4.0f, 1.5f, color);
-		UIRender.rect(matrix, x + 18.0f, y - 1.0f, 5.0f, 4.0f, 1.5f,
-			ColorUtil.multiplyAlpha(color, 0.6f));
+	// =====================================================================
+	//  Settings popup (right of the main panel)
+	// =====================================================================
+
+	private void drawSettingsPopup(Matrix4f matrix, MsdfFont font,
+			float panelX, float panelY, float panelW, float panelH,
+			float open, float t, int mouseX, int mouseY) {
+
+		float baseX = panelX + panelW + POPUP_GAP;
+		float startX = baseX - 16.0f;            // slide-in from the left
+		float x = startX + (baseX - startX) * t;
+		float y = panelY;
+		float w = POPUP_W;
+		float h = panelH;
+		float a = open * t;
+
+		UIRender.rect(matrix, x, y, w, h, 14.0f, ColorUtil.multiplyAlpha(Theme.PANEL_BG, a));
+		UIRender.border(matrix, x, y, w, h, 14.0f, 1.0f,
+			ColorUtil.multiplyAlpha(Theme.PANEL_BORDER, a));
+
+		// Header
+		UIRender.text(matrix, font, settingsModule.name, x + POPUP_PAD_X, y + 12.0f,
+			11.0f, ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, a), 0.06f);
+		UIRender.text(matrix, font, settingsModule.description, x + POPUP_PAD_X, y + 26.0f,
+			6.5f, ColorUtil.multiplyAlpha(Theme.TEXT_MUTED, a), 0.04f);
+
+		// Close X (top-right)
+		float closeSize = 14.0f;
+		float closeX = x + w - POPUP_PAD_X - closeSize;
+		float closeY = y + 12.0f;
+		boolean closeHover = isInside(mouseX, mouseY, closeX, closeY, closeSize, closeSize);
+		int closeColor = closeHover ? Theme.DANGER : 0xFFA0A0B0;
+		UIRender.rect(matrix, closeX, closeY, closeSize, closeSize, 4.0f,
+			ColorUtil.multiplyAlpha(closeHover ? Theme.DANGER : 0x10FFFFFF, (closeHover ? 0.18f : 1.0f) * a));
+		UIRender.text(matrix, font, "x", closeX + 4.0f, closeY + 3.0f, 8.0f,
+			ColorUtil.multiplyAlpha(closeColor, a));
+
+		// Divider
+		UIRender.rect(matrix, x + POPUP_PAD_X, y + POPUP_HEADER_H, w - POPUP_PAD_X * 2, 1.0f,
+			0.0f, ColorUtil.multiplyAlpha(Theme.DIVIDER, a));
+
+		// Settings list
+		float cy = y + POPUP_HEADER_H + 10.0f;
+		float bottom = y + h - 10.0f;
+		float contentX = x + POPUP_PAD_X;
+		float contentW = w - POPUP_PAD_X * 2;
+
+		for (Setting<?> s : settingsModule.settings) {
+			if (cy >= bottom) break;
+			cy = drawSetting(matrix, font, s, contentX, cy, contentW, a, mouseX, mouseY);
+			cy += POPUP_ROW_GAP;
+		}
+	}
+
+	private float drawSetting(Matrix4f matrix, MsdfFont font, Setting<?> s,
+			float x, float y, float w, float a, int mouseX, int mouseY) {
+
+		// Label
+		UIRender.text(matrix, font, s.name, x, y, 8.0f,
+			ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, a), 0.05f);
+
+		float ny = y + 12.0f;
+
+		if (s instanceof BooleanSetting bs) {
+			ny = drawBoolean(matrix, bs, x, y, w, a, mouseX, mouseY);
+		} else if (s instanceof NumberSetting ns) {
+			ny = drawSlider(matrix, font, ns, x, ny, w, a, mouseX, mouseY);
+		} else if (s instanceof ModeSetting ms) {
+			ny = drawMode(matrix, font, ms, x, ny, w, a, mouseX, mouseY);
+		} else if (s instanceof MultiSetting mu) {
+			ny = drawMulti(matrix, font, mu, x, ny, w, a, mouseX, mouseY);
+		} else {
+			ny += 14.0f;
+		}
+		return ny;
+	}
+
+	private float drawBoolean(Matrix4f matrix, BooleanSetting s,
+			float x, float y, float w, float a, int mouseX, int mouseY) {
+		// Toggle on the right of the label row
+		float trackW = 22.0f;
+		float trackH = 12.0f;
+		float tx = x + w - trackW;
+		float ty = y - 1.0f;
+		boolean on = s.get();
+		int trackColor = on ? Theme.CARD_ACTIVE_TO : 0x33FFFFFF;
+		UIRender.rect(matrix, tx, ty, trackW, trackH, trackH * 0.5f,
+			ColorUtil.multiplyAlpha(trackColor, a));
+		float knobR = trackH - 4.0f;
+		float knobX = on ? tx + trackW - knobR - 2.0f : tx + 2.0f;
+		UIRender.rect(matrix, knobX, ty + 2.0f, knobR, knobR, knobR * 0.5f,
+			ColorUtil.multiplyAlpha(0xFFFFFFFF, a));
+		return y + 14.0f;
+	}
+
+	private float drawSlider(Matrix4f matrix, MsdfFont font, NumberSetting s,
+			float x, float y, float w, float a, int mouseX, int mouseY) {
+		float trackH = 4.0f;
+		float trackY = y + 4.0f;
+		float trackW = w;
+		float frac = (float) ((s.get() - s.min) / (s.max - s.min));
+		frac = Math.max(0.0f, Math.min(1.0f, frac));
+
+		UIRender.rect(matrix, x, trackY, trackW, trackH, 2.0f,
+			ColorUtil.multiplyAlpha(0x22FFFFFF, a));
+		UIRender.rectGradientH(matrix, x, trackY, trackW * frac, trackH, 2.0f,
+			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, a),
+			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO,   a));
+
+		float knobX = x + trackW * frac - 4.0f;
+		UIRender.rect(matrix, knobX, trackY - 3.0f, 8.0f, 10.0f, 4.0f,
+			ColorUtil.multiplyAlpha(0xFFFFFFFF, a));
+
+		String value = String.format("%.1f", s.get());
+		float vw = UIRender.textWidth(font, value, 7.0f);
+		UIRender.text(matrix, font, value, x + w - vw, y + 12.0f, 7.0f,
+			ColorUtil.multiplyAlpha(Theme.TEXT_SECONDARY, a));
+
+		return y + 22.0f;
+	}
+
+	private float drawMode(Matrix4f matrix, MsdfFont font, ModeSetting s,
+			float x, float y, float w, float a, int mouseX, int mouseY) {
+		float h = 16.0f;
+		boolean hovered = isInside(mouseX, mouseY, x, y, w, h);
+		UIRender.rect(matrix, x, y, w, h, 6.0f,
+			ColorUtil.multiplyAlpha(hovered ? Theme.CARD_HOVER : Theme.CARD_BG, a));
+		UIRender.border(matrix, x, y, w, h, 6.0f, 1.0f,
+			ColorUtil.multiplyAlpha(Theme.CARD_BORDER, a));
+		UIRender.text(matrix, font, s.get(), x + 8.0f, y + 4.5f, 7.5f,
+			ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, a), 0.05f);
+		// arrow indicator
+		UIRender.text(matrix, font, ">", x + w - 12.0f, y + 4.5f, 7.5f,
+			ColorUtil.multiplyAlpha(Theme.TEXT_MUTED, a));
+		return y + h + 2.0f;
+	}
+
+	private float drawMulti(Matrix4f matrix, MsdfFont font, MultiSetting s,
+			float x, float y, float w, float a, int mouseX, int mouseY) {
+		float rowH = 14.0f;
+		float rowGap = 3.0f;
+		float cy = y;
+		for (String opt : s.options) {
+			boolean selected = s.isSelected(opt);
+			boolean hovered = isInside(mouseX, mouseY, x, cy, w, rowH);
+
+			if (selected) {
+				UIRender.rectGradientH(matrix, x, cy, w, rowH, 5.0f,
+					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, a),
+					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO,   a));
+			} else {
+				UIRender.rect(matrix, x, cy, w, rowH, 5.0f,
+					ColorUtil.multiplyAlpha(hovered ? Theme.CARD_HOVER : Theme.CARD_BG, a));
+				UIRender.border(matrix, x, cy, w, rowH, 5.0f, 1.0f,
+					ColorUtil.multiplyAlpha(Theme.CARD_BORDER, 0.5f * a));
+			}
+
+			int textColor = selected ? 0xFFFFFFFF : Theme.TEXT_SECONDARY;
+			UIRender.text(matrix, font, opt, x + 8.0f, cy + 3.5f, 7.0f,
+				ColorUtil.multiplyAlpha(textColor, a), 0.04f);
+
+			cy += rowH + rowGap;
+		}
+		return cy;
 	}
 
 	// =====================================================================
@@ -473,6 +620,33 @@ public final class ClickGuiScreen extends Screen {
 	public boolean mouseClicked(double mouseX, double mouseY, int button) {
 		float panelX = (this.width  - PANEL_W) * 0.5f;
 		float panelY = (this.height - PANEL_H) * 0.5f;
+
+		// --- Settings popup interactions (handled first when open) ---
+		if (settingsModule != null && settingsAnim.getValue() > 0.5f) {
+			float popupX = panelX + PANEL_W + POPUP_GAP;
+			float popupY = panelY;
+			float popupW = POPUP_W;
+			float popupH = PANEL_H;
+
+			if (isInside(mouseX, mouseY, popupX, popupY, popupW, popupH)) {
+				// Close X
+				float closeSize = 14.0f;
+				float closeX = popupX + popupW - POPUP_PAD_X - closeSize;
+				float closeY = popupY + 12.0f;
+				if (button == 0 && isInside(mouseX, mouseY, closeX, closeY, closeSize, closeSize)) {
+					settingsModule = null;
+					settingsAnim.setTarget(0.0f);
+					return true;
+				}
+
+				// Settings rows
+				if (handleSettingsClick(mouseX, mouseY, popupX, popupY, popupW, button)) {
+					return true;
+				}
+				// Click anywhere else inside popup: just consume to avoid leaking to cards
+				return true;
+			}
+		}
 
 		// Sidebar categories
 		Category[] cats = Category.values();
@@ -514,14 +688,129 @@ public final class ClickGuiScreen extends Screen {
 			if (isInside(mouseX, mouseY, cx, cy, CARD_W, CARD_H)
 					&& mouseY >= panelY + CARD_AREA_PAD_TOP - 4.0f
 					&& mouseY <= panelY + PANEL_H - CARD_AREA_PAD_BOTTOM) {
-				visibleModules.get(i).toggle();
+
+				Module module = visibleModules.get(i);
+				if (button == 1) {
+					// Right click: toggle settings popup
+					if (settingsModule == module) {
+						settingsModule = null;
+						settingsAnim.setTarget(0.0f);
+					} else if (!module.settings.isEmpty()) {
+						settingsModule = module;
+						settingsAnim.setImmediate(0.0f);
+						settingsAnim.setTarget(1.0f);
+					}
+					return true;
+				}
+				// Left click: toggle module
+				module.toggle();
 				cardClickFlash.get(i).setImmediate(0.0f);
 				cardClickFlash.get(i).setTarget(1.0f);
 				return true;
 			}
 		}
 
+		// Click outside everything: close settings popup
+		if (settingsModule != null) {
+			settingsModule = null;
+			settingsAnim.setTarget(0.0f);
+		}
+
 		return super.mouseClicked(mouseX, mouseY, button);
+	}
+
+	private boolean handleSettingsClick(double mouseX, double mouseY,
+			float popupX, float popupY, float popupW, int button) {
+		float contentX = popupX + POPUP_PAD_X;
+		float contentW = popupW - POPUP_PAD_X * 2;
+		float cy = popupY + POPUP_HEADER_H + 10.0f;
+
+		for (Setting<?> s : settingsModule.settings) {
+			float labelY = cy;
+			float controlY = cy + 12.0f;
+
+			if (s instanceof BooleanSetting bs) {
+				float trackW = 22.0f;
+				float trackH = 12.0f;
+				float tx = contentX + contentW - trackW;
+				float ty = labelY - 1.0f;
+				if (isInside(mouseX, mouseY, tx, ty, trackW, trackH) && button == 0) {
+					bs.toggle();
+					return true;
+				}
+				cy = labelY + 14.0f + POPUP_ROW_GAP;
+
+			} else if (s instanceof NumberSetting ns) {
+				float trackY = controlY + 4.0f;
+				float trackW = contentW;
+				if (isInside(mouseX, mouseY, contentX, trackY - 4.0f, trackW, 14.0f) && button == 0) {
+					float frac = (float) ((mouseX - contentX) / trackW);
+					frac = Math.max(0.0f, Math.min(1.0f, frac));
+					double v = ns.min + (ns.max - ns.min) * frac;
+					double step = ns.step;
+					if (step > 0.0) {
+						v = Math.round(v / step) * step;
+					}
+					ns.set(v);
+					draggingSlider = ns;
+					return true;
+				}
+				cy = controlY + 22.0f + POPUP_ROW_GAP;
+
+			} else if (s instanceof ModeSetting ms) {
+				float h = 16.0f;
+				if (isInside(mouseX, mouseY, contentX, controlY, contentW, h) && button == 0) {
+					ms.cycle();
+					return true;
+				}
+				cy = controlY + h + 2.0f + POPUP_ROW_GAP;
+
+			} else if (s instanceof MultiSetting mu) {
+				float rowH = 14.0f;
+				float rowGap = 3.0f;
+				float ry = controlY;
+				for (String opt : mu.options) {
+					if (isInside(mouseX, mouseY, contentX, ry, contentW, rowH) && button == 0) {
+						mu.toggle(opt);
+						return true;
+					}
+					ry += rowH + rowGap;
+				}
+				cy = ry + POPUP_ROW_GAP;
+
+			} else {
+				cy = controlY + 14.0f + POPUP_ROW_GAP;
+			}
+		}
+		return false;
+	}
+
+	@Override
+	public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
+		if (draggingSlider != null && button == 0 && settingsModule != null) {
+			float panelX = (this.width  - PANEL_W) * 0.5f;
+			float popupX = panelX + PANEL_W + POPUP_GAP;
+			float contentX = popupX + POPUP_PAD_X;
+			float trackW = POPUP_W - POPUP_PAD_X * 2;
+			float frac = (float) ((mouseX - contentX) / trackW);
+			frac = Math.max(0.0f, Math.min(1.0f, frac));
+			NumberSetting ns = draggingSlider;
+			double v = ns.min + (ns.max - ns.min) * frac;
+			if (ns.step > 0.0) {
+				v = Math.round(v / ns.step) * ns.step;
+			}
+			ns.set(v);
+			return true;
+		}
+		return super.mouseDragged(mouseX, mouseY, button, deltaX, deltaY);
+	}
+
+	@Override
+	public boolean mouseReleased(double mouseX, double mouseY, int button) {
+		if (button == 0) {
+			draggingSlider = null;
+		}
+		return super.mouseReleased(mouseX, mouseY, button);
 	}
 
 	@Override
@@ -552,6 +841,11 @@ public final class ClickGuiScreen extends Screen {
 				return true;
 			}
 		}
+		if (keyCode == 256 /* ESC */ && settingsModule != null) {
+			settingsModule = null;
+			settingsAnim.setTarget(0.0f);
+			return true;
+		}
 		return super.keyPressed(keyCode, scanCode, modifiers);
 	}
 
@@ -564,10 +858,6 @@ public final class ClickGuiScreen extends Screen {
 		}
 		return super.charTyped(chr, modifiers);
 	}
-
-	// =====================================================================
-	//  HELPERS
-	// =====================================================================
 
 	private static boolean isInside(double mouseX, double mouseY, float x, float y, float w, float h) {
 		return mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h;
