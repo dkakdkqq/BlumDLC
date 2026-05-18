@@ -4,7 +4,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import org.joml.Matrix4f;
+
 import dev.blumdlc.client.modules.impl.AttackAura;
+import dev.blumdlc.client.modules.impl.TargetESP;
 
 public final class ModuleManager {
 
@@ -45,12 +48,28 @@ public final class ModuleManager {
 	}
 
 	/**
+	 * Per-frame HUD render hook: lets enabled modules draw screen-space
+	 * overlays (e.g. TargetESP) using the project's Builder API.
+	 */
+	public void render(Matrix4f matrix, float tickDelta) {
+		for (Module m : this.modules) {
+			if (m.enabled) {
+				m.onRender(matrix, tickDelta);
+			}
+		}
+	}
+
+	/**
 	 * Registers the modules that actually exist in code today.
 	 * Anything without a real implementation is intentionally not listed here.
 	 */
 	public void registerDefaults() {
 		// Combat
-		register(new AttackAura());
+		AttackAura aura = new AttackAura();
+		register(aura);
+
+		// Visual
+		register(new TargetESP(aura));
 
 		// Util
 		register(new Module("ClickGUI", "Opens this menu", Category.UTIL).defaultOn());

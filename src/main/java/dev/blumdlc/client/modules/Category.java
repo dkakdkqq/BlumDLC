@@ -4,7 +4,7 @@ public enum Category {
 
 	COMBAT("Combat"),
 	MOVEMENT("Movement"),
-	RENDER("Render"),
+	RENDER("Visual"),
 	PLAYER("Player"),
 	UTIL("Util");
 
