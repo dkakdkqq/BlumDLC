@@ -141,6 +141,14 @@ public final class ClickGuiScreen extends Screen {
 		return false;
 	}
 
+	/**
+	 * Disable the vanilla screen-background blur. We draw our own dim layer in {@link #render}.
+	 */
+	@Override
+	public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
+		// no-op
+	}
+
 	@Override
 	public void close() {
 		openAnim.setTarget(0.0f);
