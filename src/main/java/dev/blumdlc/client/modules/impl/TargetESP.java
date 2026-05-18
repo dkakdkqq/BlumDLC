@@ -103,7 +103,7 @@ public final class TargetESP extends Module {
 			.translate(-px, -py, 0.0f);
 
 		// 4. Draw the quad through the existing texture renderer.
-		int alpha = clampAlpha((int) brightness.get());
+		int alpha = clampAlpha((int) brightness.get().doubleValue());
 		QuadColorState corners = paletteFor(color.get(), angle, alpha);
 
 		Builder.texture()
