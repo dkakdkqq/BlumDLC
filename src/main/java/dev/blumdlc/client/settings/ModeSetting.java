@@ -11,6 +11,10 @@ public final class ModeSetting extends Setting<String> {
 		this.modes = List.of(modes);
 	}
 
+	public boolean is(String mode) {
+		return mode.equals(this.value);
+	}
+
 	public void cycle() {
 		int i = (modes.indexOf(value) + 1) % modes.size();
 		this.value = modes.get(i);

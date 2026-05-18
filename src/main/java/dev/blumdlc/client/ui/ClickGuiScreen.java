@@ -17,6 +17,7 @@ import dev.blumdlc.client.settings.Setting;
 import dev.blumdlc.client.ui.animation.Animation;
 import dev.blumdlc.client.ui.animation.Easing;
 import dev.blumdlc.client.ui.util.ColorUtil;
+import dev.blumdlc.client.util.KeyName;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.Text;
@@ -30,24 +31,24 @@ import net.minecraft.text.Text;
 public final class ClickGuiScreen extends Screen {
 
 	// --- Panel geometry ---
-	private static final float PANEL_W = 620.0f;
-	private static final float PANEL_H = 320.0f;
-	private static final float SIDEBAR_W = 130.0f;
-	private static final float CARD_W = 108.0f;
-	private static final float CARD_H = 48.0f;
-	private static final float CARD_GAP_X = 6.0f;
-	private static final float CARD_GAP_Y = 6.0f;
-	private static final float CARD_AREA_PAD_X = 12.0f;
-	private static final float CARD_AREA_PAD_TOP = 46.0f;
-	private static final float CARD_AREA_PAD_BOTTOM = 10.0f;
+	private static final float PANEL_W = 540.0f;
+	private static final float PANEL_H = 280.0f;
+	private static final float SIDEBAR_W = 110.0f;
+	private static final float CARD_W = 96.0f;
+	private static final float CARD_H = 42.0f;
+	private static final float CARD_GAP_X = 5.0f;
+	private static final float CARD_GAP_Y = 5.0f;
+	private static final float CARD_AREA_PAD_X = 10.0f;
+	private static final float CARD_AREA_PAD_TOP = 40.0f;
+	private static final float CARD_AREA_PAD_BOTTOM = 8.0f;
 	private static final int   CARDS_PER_ROW = 4;
 
 	// --- Settings popup ---
-	private static final float POPUP_W = 220.0f;
-	private static final float POPUP_GAP = 8.0f;
-	private static final float POPUP_PAD_X = 14.0f;
-	private static final float POPUP_HEADER_H = 36.0f;
-	private static final float POPUP_ROW_GAP = 8.0f;
+	private static final float POPUP_W = 200.0f;
+	private static final float POPUP_GAP = 7.0f;
+	private static final float POPUP_PAD_X = 12.0f;
+	private static final float POPUP_HEADER_H = 32.0f;
+	private static final float POPUP_ROW_GAP = 7.0f;
 
 	// --- Animations: panel ---
 	private final Animation openAnim   = new Animation(0.0f, 360, Easing.EASE_OUT_QUINT);
@@ -84,6 +85,19 @@ public final class ClickGuiScreen extends Screen {
 	private final Animation settingsAnim = new Animation(0.0f, 320, Easing.EASE_OUT_EXPO);
 	private NumberSetting draggingSlider = null;
 
+	// --- Dropdown overlay state ---
+	/** ModeSetting whose dropdown is currently open (null == none). */
+	private ModeSetting openDropdown = null;
+	/**
+	 * Screen-space rect of the closed selector that opened the dropdown.
+	 * Used to anchor the option list and to detect "click outside".
+	 */
+	private float dropdownX, dropdownY, dropdownW, dropdownH;
+
+	// --- Bind capture state ---
+	/** Module currently waiting for a key press to set its bind (null == none). */
+	private Module bindingModule = null;
+
 	public ClickGuiScreen() {
 		super(Text.literal("Blum"));
 		for (int i = 0; i < categoryHover.length; i++) {
@@ -106,6 +120,7 @@ public final class ClickGuiScreen extends Screen {
 		if (settingsModule != null && !visibleModules.contains(settingsModule)) {
 			settingsModule = null;
 			settingsAnim.setTarget(0.0f);
+			openDropdown = null;
 		}
 
 		this.cardHover.clear();
@@ -170,6 +185,8 @@ public final class ClickGuiScreen extends Screen {
 	public void close() {
 		openAnim.setTarget(0.0f);
 		slideAnim.setTarget(40.0f);
+		bindingModule = null;
+		openDropdown = null;
 		super.close();
 	}
 
@@ -430,6 +447,23 @@ public final class ClickGuiScreen extends Screen {
 				UIRender.rect(matrix, ix + 4.0f, iy, 2.0f, 2.0f, 1.0f, ColorUtil.multiplyAlpha(0xFFFFFFFF, 0.55f * cardAlpha));
 				UIRender.rect(matrix, ix + 8.0f, iy, 2.0f, 2.0f, 1.0f, ColorUtil.multiplyAlpha(0xFFFFFFFF, 0.55f * cardAlpha));
 			}
+
+			// Bind chip in the bottom-right corner of the card.
+			boolean awaitingBind = (bindingModule == module);
+			if (awaitingBind || KeyName.isBound(module.keybind)) {
+				String label = awaitingBind ? "..." : "[" + KeyName.describe(module.keybind) + "]";
+				float kfs = 6.0f;
+				float kw = UIRender.textWidth(font, label, kfs) + 6.0f;
+				float kh = kfs + 4.0f;
+				float kx = cardX + CARD_W - kw - 6.0f;
+				float ky = cy + CARD_H - kh - 5.0f;
+				int chipBg = awaitingBind ? Theme.ACCENT : 0x99000000;
+				UIRender.rect(matrix, kx, ky, kw, kh, kh * 0.5f,
+					ColorUtil.multiplyAlpha(chipBg, cardAlpha));
+				int textColor = awaitingBind ? 0xFF14141C : Theme.TEXT_PRIMARY;
+				UIRender.text(matrix, font, label, kx + 3.0f, ky + 2.0f, kfs,
+					ColorUtil.multiplyAlpha(textColor, cardAlpha), 0.05f);
+			}
 		}
 
 		if (maxScroll > 0.5f) {
@@ -498,6 +532,9 @@ public final class ClickGuiScreen extends Screen {
 			cy = drawSetting(matrix, font, s, contentX, cy, contentW, a, mouseX, mouseY);
 			cy += POPUP_ROW_GAP;
 		}
+
+		// Open dropdown is rendered last so it overlays subsequent rows.
+		drawDropdownOverlay(matrix, font, a, mouseX, mouseY);
 	}
 
 	private float drawSetting(Matrix4f matrix, MsdfFont font, Setting<?> s,
@@ -571,16 +608,65 @@ public final class ClickGuiScreen extends Screen {
 			float x, float y, float w, float a, int mouseX, int mouseY) {
 		float h = 16.0f;
 		boolean hovered = isInside(mouseX, mouseY, x, y, w, h);
+		boolean open = (openDropdown == s);
+
 		UIRender.rect(matrix, x, y, w, h, 6.0f,
-			ColorUtil.multiplyAlpha(hovered ? Theme.CARD_HOVER : Theme.CARD_BG, a));
+			ColorUtil.multiplyAlpha(open ? Theme.CARD_HOVER : (hovered ? Theme.CARD_HOVER : Theme.CARD_BG), a));
 		UIRender.border(matrix, x, y, w, h, 6.0f, 1.0f,
-			ColorUtil.multiplyAlpha(Theme.CARD_BORDER, a));
+			ColorUtil.multiplyAlpha(open ? Theme.ACCENT : Theme.CARD_BORDER, a));
 		UIRender.text(matrix, font, s.get(), x + 8.0f, y + 4.5f, 7.5f,
 			ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, a), 0.05f);
-		// arrow indicator
-		UIRender.text(matrix, font, ">", x + w - 12.0f, y + 4.5f, 7.5f,
+		// Caret indicator: down when closed, up when open.
+		UIRender.text(matrix, font, open ? "^" : "v", x + w - 12.0f, y + 4.5f, 7.5f,
 			ColorUtil.multiplyAlpha(Theme.TEXT_MUTED, a));
+
+		// Remember anchor for the overlay-pass dropdown render.
+		if (open) {
+			dropdownX = x;
+			dropdownY = y;
+			dropdownW = w;
+			dropdownH = h;
+		}
+
 		return y + h + 2.0f;
+	}
+
+	private void drawDropdownOverlay(Matrix4f matrix, MsdfFont font, float a, int mouseX, int mouseY) {
+		ModeSetting s = openDropdown;
+		if (s == null) return;
+
+		float rowH = 14.0f;
+		float listH = s.modes.size() * rowH;
+		float x = dropdownX;
+		float y = dropdownY + dropdownH + 2.0f;
+		float w = dropdownW;
+
+		UIRender.rect(matrix, x, y, w, listH, 6.0f,
+			ColorUtil.multiplyAlpha(Theme.PANEL_BG, a));
+		UIRender.border(matrix, x, y, w, listH, 6.0f, 1.0f,
+			ColorUtil.multiplyAlpha(Theme.ACCENT, a));
+
+		float cy = y;
+		String selected = s.get();
+		for (String mode : s.modes) {
+			boolean isSelected = mode.equals(selected);
+			boolean hovered = isInside(mouseX, mouseY, x, cy, w, rowH);
+
+			if (isSelected) {
+				UIRender.rectGradientH(matrix, x + 1, cy, w - 2, rowH, 5.0f,
+					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, a),
+					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO,   a));
+			} else if (hovered) {
+				UIRender.rect(matrix, x + 1, cy, w - 2, rowH, 5.0f,
+					ColorUtil.multiplyAlpha(Theme.CARD_HOVER, a));
+			}
+
+			int textColor = isSelected ? 0xFFFFFFFF : Theme.TEXT_SECONDARY;
+			UIRender.text(matrix, font, mode, x + 8.0f, cy + 3.5f, 7.0f,
+				ColorUtil.multiplyAlpha(textColor, a), 0.04f);
+
+			cy += rowH;
+		}
 	}
 
 	private float drawMulti(Matrix4f matrix, MsdfFont font, MultiSetting s,
@@ -636,6 +722,7 @@ public final class ClickGuiScreen extends Screen {
 				if (button == 0 && isInside(mouseX, mouseY, closeX, closeY, closeSize, closeSize)) {
 					settingsModule = null;
 					settingsAnim.setTarget(0.0f);
+					openDropdown = null;
 					return true;
 				}
 
@@ -695,11 +782,18 @@ public final class ClickGuiScreen extends Screen {
 					if (settingsModule == module) {
 						settingsModule = null;
 						settingsAnim.setTarget(0.0f);
+						openDropdown = null;
 					} else if (!module.settings.isEmpty()) {
 						settingsModule = module;
 						settingsAnim.setImmediate(0.0f);
 						settingsAnim.setTarget(1.0f);
+						openDropdown = null;
 					}
+					return true;
+				}
+				if (button == 2) {
+					// Middle click: enter bind-capture mode for this module.
+					bindingModule = (bindingModule == module) ? null : module;
 					return true;
 				}
 				// Left click: toggle module
@@ -714,6 +808,7 @@ public final class ClickGuiScreen extends Screen {
 		if (settingsModule != null) {
 			settingsModule = null;
 			settingsAnim.setTarget(0.0f);
+			openDropdown = null;
 		}
 
 		return super.mouseClicked(mouseX, mouseY, button);
@@ -724,6 +819,29 @@ public final class ClickGuiScreen extends Screen {
 		float contentX = popupX + POPUP_PAD_X;
 		float contentW = popupW - POPUP_PAD_X * 2;
 		float cy = popupY + POPUP_HEADER_H + 10.0f;
+
+		// 0. If a dropdown is open, intercept clicks on its option list first.
+		if (openDropdown != null && button == 0) {
+			float listY = dropdownY + dropdownH + 2.0f;
+			float rowH = 14.0f;
+			float listH = openDropdown.modes.size() * rowH;
+			if (isInside(mouseX, mouseY, dropdownX, listY, dropdownW, listH)) {
+				int idx = (int) ((mouseY - listY) / rowH);
+				if (idx >= 0 && idx < openDropdown.modes.size()) {
+					openDropdown.set(openDropdown.modes.get(idx));
+				}
+				openDropdown = null;
+				return true;
+			}
+			// Click on the selector itself = close the dropdown.
+			if (isInside(mouseX, mouseY, dropdownX, dropdownY, dropdownW, dropdownH)) {
+				openDropdown = null;
+				return true;
+			}
+			// Click was outside both the selector and the option list:
+			// close the dropdown but still let other handlers process the click.
+			openDropdown = null;
+		}
 
 		for (Setting<?> s : settingsModule.settings) {
 			float labelY = cy;
@@ -760,7 +878,8 @@ public final class ClickGuiScreen extends Screen {
 			} else if (s instanceof ModeSetting ms) {
 				float h = 16.0f;
 				if (isInside(mouseX, mouseY, contentX, controlY, contentW, h) && button == 0) {
-					ms.cycle();
+					// Toggle the dropdown for this setting.
+					openDropdown = (openDropdown == ms) ? null : ms;
 					return true;
 				}
 				cy = controlY + h + 2.0f + POPUP_ROW_GAP;
@@ -822,6 +941,18 @@ public final class ClickGuiScreen extends Screen {
 
 	@Override
 	public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+		// Bind capture takes priority over everything else.
+		if (bindingModule != null) {
+			if (keyCode == 256 /* ESC */) {
+				// ESC during capture = clear the bind.
+				bindingModule.keybind = -1;
+			} else {
+				bindingModule.keybind = keyCode;
+			}
+			bindingModule = null;
+			return true;
+		}
+
 		if (searchActive) {
 			if (keyCode == 256 /* ESC */) {
 				searchActive = false;
@@ -842,6 +973,10 @@ public final class ClickGuiScreen extends Screen {
 			}
 		}
 		if (keyCode == 256 /* ESC */ && settingsModule != null) {
+			if (openDropdown != null) {
+				openDropdown = null;
+				return true;
+			}
 			settingsModule = null;
 			settingsAnim.setTarget(0.0f);
 			return true;

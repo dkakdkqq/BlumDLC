@@ -55,7 +55,7 @@ public final class AttackAura extends Module {
 	public final NumberSetting vision;
 	public final ModeSetting   rotations;
 	public final MultiSetting  targets;
-	public final MultiSetting  movementCorrection;
+	public final ModeSetting   movementCorrection;
 	public final MultiSetting  extras;
 
 	// --- runtime state ------------------------------------------------------
@@ -80,9 +80,8 @@ public final class AttackAura extends Module {
 			List.of("Players", "Animals", "Mobs", "Friends"),
 			"Players");
 
-		this.movementCorrection = new MultiSetting("Movement Correction",
-			List.of("Free", "Targeted"),
-			"Free");
+		this.movementCorrection = new ModeSetting("Movement Correction",
+			"Free", "Free", "Targeted");
 
 		this.extras = new MultiSetting("Extras",
 			List.of(
@@ -249,7 +248,7 @@ public final class AttackAura extends Module {
 		this.serverPitch = nextPitch;
 		this.rotating = true;
 
-		boolean visible = movementCorrection.isSelected("Targeted");
+		boolean visible = movementCorrection.is("Targeted");
 		if (visible) {
 			// "Targeted": we move the actual player rotation so the camera
 			// follows the target. The vanilla movement packets emitted by the

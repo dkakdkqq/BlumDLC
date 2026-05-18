@@ -7,7 +7,11 @@ import java.util.stream.Collectors;
 import org.joml.Matrix4f;
 
 import dev.blumdlc.client.modules.impl.AttackAura;
+import dev.blumdlc.client.modules.impl.KeybindsHud;
+import dev.blumdlc.client.modules.impl.PotionsHud;
+import dev.blumdlc.client.modules.impl.StaffHud;
 import dev.blumdlc.client.modules.impl.TargetESP;
+import dev.blumdlc.client.modules.impl.Watermark;
 
 public final class ModuleManager {
 
@@ -70,6 +74,10 @@ public final class ModuleManager {
 
 		// Visual
 		register(new TargetESP(aura));
+		register(new Watermark());
+		register(new KeybindsHud());
+		register(new PotionsHud());
+		register(new StaffHud());
 
 		// Util
 		register(new Module("ClickGUI", "Opens this menu", Category.UTIL).defaultOn());

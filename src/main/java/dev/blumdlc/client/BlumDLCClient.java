@@ -32,6 +32,7 @@ public final class BlumDLCClient implements ClientModInitializer {
 				}
 			}
 			BlumDLC.MODULES.tick();
+			dev.blumdlc.client.bind.BindManager.tick();
 		});
 
 		// Capture world-render matrices each frame so modules can project

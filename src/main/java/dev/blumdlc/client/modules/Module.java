@@ -15,6 +15,13 @@ public class Module {
 	public boolean enabled;
 	public final List<Setting<?>> settings = new ArrayList<>();
 
+	/**
+	 * GLFW key code bound to toggling this module, or -1 when unbound.
+	 * Set via {@link dev.blumdlc.client.bind.BindManager}; the ClickGUI lets
+	 * the user enter "bind mode" by middle-clicking a card and pressing a key.
+	 */
+	public int keybind = -1;
+
 	public Module(String name, String description, Category category) {
 		this.name = name;
 		this.description = description;
