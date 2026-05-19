@@ -7,6 +7,7 @@ import java.util.stream.Collectors;
 import org.joml.Matrix4f;
 
 import dev.blumdlc.client.modules.impl.AttackAura;
+import dev.blumdlc.client.modules.impl.HudSettings;
 import dev.blumdlc.client.modules.impl.KeybindsHud;
 import dev.blumdlc.client.modules.impl.PotionsHud;
 import dev.blumdlc.client.modules.impl.StaffHud;
@@ -82,6 +83,11 @@ public final class ModuleManager {
 		register(new PotionsHud());
 		register(new StaffHud());
 		register(new Trails());
+
+		// Visual — HUD toggle panel (must be registered after all HudModules)
+		HudSettings hudSettings = new HudSettings();
+		register(hudSettings);
+		hudSettings.populate();
 
 		// Util
 		register(new Module("ClickGUI", "Opens this menu", Category.UTIL).defaultOn());
