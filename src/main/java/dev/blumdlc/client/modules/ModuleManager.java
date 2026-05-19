@@ -12,6 +12,7 @@ import dev.blumdlc.client.modules.impl.PotionsHud;
 import dev.blumdlc.client.modules.impl.StaffHud;
 import dev.blumdlc.client.modules.impl.TargetESP;
 import dev.blumdlc.client.modules.impl.TargetHud;
+import dev.blumdlc.client.modules.impl.Trails;
 import dev.blumdlc.client.modules.impl.Watermark;
 
 public final class ModuleManager {
@@ -80,6 +81,7 @@ public final class ModuleManager {
 		register(new KeybindsHud());
 		register(new PotionsHud());
 		register(new StaffHud());
+		register(new Trails());
 
 		// Util
 		register(new Module("ClickGUI", "Opens this menu", Category.UTIL).defaultOn());
