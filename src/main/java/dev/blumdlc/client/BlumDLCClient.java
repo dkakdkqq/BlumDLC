@@ -3,6 +3,7 @@ package dev.blumdlc.client;
 import org.lwjgl.glfw.GLFW;
 
 import dev.blumdlc.client.ui.ClickGuiScreen;
+import dev.blumdlc.client.ui.hud.HudEditor;
 import dev.blumdlc.client.util.Projection;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -45,12 +46,15 @@ public final class BlumDLCClient implements ClientModInitializer {
 			);
 		});
 
-		// Per-frame HUD render: dispatch to all enabled modules.
+		// Per-frame HUD render: drive the chat-screen HUD editor first
+		// (so its drag state is up-to-date before HUDs are queried for hit
+		// testing), then dispatch to all enabled modules, then draw the
+		// editor's selection overlay on top.
 		HudRenderCallback.EVENT.register((drawContext, tickCounter) -> {
-			BlumDLC.MODULES.render(
-				drawContext.getMatrices().peek().getPositionMatrix(),
-				tickCounter.getTickDelta(true)
-			);
+			HudEditor.update();
+			org.joml.Matrix4f matrix = drawContext.getMatrices().peek().getPositionMatrix();
+			BlumDLC.MODULES.render(matrix, tickCounter.getTickDelta(true));
+			HudEditor.render(matrix);
 		});
 	}
 
