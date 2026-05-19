@@ -130,7 +130,7 @@ public final class Trails extends Module {
 		samples.addLast(new Sample(pos.x, pos.y, pos.z, player.getHeight(), now));
 		lastSampleMs = now;
 
-		int maxSamples = Math.max(2, (int) length.get());
+		int maxSamples = Math.max(2, (int) length.get().doubleValue());
 		while (samples.size() > maxSamples) {
 			samples.pollFirst();
 		}
