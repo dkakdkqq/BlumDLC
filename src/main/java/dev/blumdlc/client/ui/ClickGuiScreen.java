@@ -147,27 +147,51 @@ public final class ClickGuiScreen extends Screen {
 			popup.detach();
 		}
 
-		this.cardHover.clear();
-		this.cardEnter.clear();
-		this.cardActive.clear();
-		this.cardClickFlash.clear();
-		for (int i = 0; i < visibleModules.size(); i++) {
-			cardHover.add(new Animation(0.0f, 160, Easing.EASE_OUT_CUBIC));
-			Animation enter = new Animation(0.0f, 380, Easing.EASE_OUT_QUINT);
-			if (stagger) {
-				enter.setTarget(1.0f, 25L * i);
+		int size = visibleModules.size();
+
+		// Reuse existing animation lists — only add/remove what's necessary
+		// to match the new size. Avoids GC churn on FoldCraft Launcher.
+		resizeAnimList(cardHover, size, () -> new Animation(0.0f, 160, Easing.EASE_OUT_CUBIC));
+		resizeAnimList(cardClickFlash, size, () -> new Animation(0.0f, 280, Easing.EASE_OUT_CUBIC));
+
+		// Enter and active anims need special handling (state-dependent)
+		while (cardEnter.size() > size) cardEnter.remove(cardEnter.size() - 1);
+		while (cardActive.size() > size) cardActive.remove(cardActive.size() - 1);
+
+		for (int i = 0; i < size; i++) {
+			if (i < cardEnter.size()) {
+				// Existing slot — just re-trigger if staggering
+				if (stagger) {
+					cardEnter.get(i).setImmediate(0.0f);
+					cardEnter.get(i).setTarget(1.0f, 25L * i);
+				}
 			} else {
-				enter.setImmediate(1.0f);
+				Animation enter = new Animation(0.0f, 380, Easing.EASE_OUT_QUINT);
+				if (stagger) {
+					enter.setTarget(1.0f, 25L * i);
+				} else {
+					enter.setImmediate(1.0f);
+				}
+				cardEnter.add(enter);
 			}
-			cardEnter.add(enter);
 
-			Animation activeAnim = new Animation(0.0f, 220, Easing.EASE_OUT_CUBIC);
-			activeAnim.setImmediate(visibleModules.get(i).enabled ? 1.0f : 0.0f);
-			cardActive.add(activeAnim);
-
-			cardClickFlash.add(new Animation(0.0f, 280, Easing.EASE_OUT_CUBIC));
+			if (i < cardActive.size()) {
+				cardActive.get(i).setTarget(visibleModules.get(i).enabled ? 1.0f : 0.0f);
+			} else {
+				Animation activeAnim = new Animation(0.0f, 220, Easing.EASE_OUT_CUBIC);
+				activeAnim.setImmediate(visibleModules.get(i).enabled ? 1.0f : 0.0f);
+				cardActive.add(activeAnim);
+			}
 		}
+
 		clampScroll();
+	}
+
+	/** Resizes an animation list to the desired size, reusing existing objects. */
+	private static void resizeAnimList(List<Animation> list, int size,
+			java.util.function.Supplier<Animation> factory) {
+		while (list.size() > size) list.remove(list.size() - 1);
+		while (list.size() < size) list.add(factory.get());
 	}
 
 	private void updateSelectorAnim(boolean immediate) {
