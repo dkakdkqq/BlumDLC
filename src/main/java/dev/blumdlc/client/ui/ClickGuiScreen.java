@@ -10,6 +10,7 @@ import dev.blumdlc.client.modules.Category;
 import dev.blumdlc.client.modules.Module;
 import dev.blumdlc.client.msdf.MsdfFont;
 import dev.blumdlc.client.settings.BooleanSetting;
+import dev.blumdlc.client.settings.ColorSetting;
 import dev.blumdlc.client.settings.ModeSetting;
 import dev.blumdlc.client.settings.MultiSetting;
 import dev.blumdlc.client.settings.NumberSetting;
@@ -84,6 +85,14 @@ public final class ClickGuiScreen extends Screen {
 	private Module settingsModule = null;
 	private final Animation settingsAnim = new Animation(0.0f, 320, Easing.EASE_OUT_EXPO);
 	private NumberSetting draggingSlider = null;
+
+	// --- Settings popup scroll ---
+	private final Animation settingsScroll = new Animation(0.0f, 220, Easing.EASE_OUT_CUBIC);
+	private float settingsScrollTarget = 0.0f;
+	private float settingsMaxScroll = 0.0f;
+
+	// --- Color slider drag state ---
+	private ColorSetting draggingColor = null;
 
 	// --- Dropdown overlay state ---
 	/** ModeSetting whose dropdown is currently open (null == none). */
@@ -521,16 +530,39 @@ public final class ClickGuiScreen extends Screen {
 		UIRender.rect(matrix, x + POPUP_PAD_X, y + POPUP_HEADER_H, w - POPUP_PAD_X * 2, 1.0f,
 			0.0f, ColorUtil.multiplyAlpha(Theme.DIVIDER, a));
 
-		// Settings list
-		float cy = y + POPUP_HEADER_H + 10.0f;
-		float bottom = y + h - 10.0f;
+		// Settings list (scrollable)
+		float contentTop = y + POPUP_HEADER_H + 10.0f;
+		float contentBottom = y + h - 10.0f;
 		float contentX = x + POPUP_PAD_X;
 		float contentW = w - POPUP_PAD_X * 2;
 
+		// Compute total settings height to determine scroll bounds
+		float totalSettingsH = computeSettingsHeight(settingsModule);
+		float visibleH = contentBottom - contentTop;
+		settingsMaxScroll = Math.max(0.0f, totalSettingsH - visibleH);
+		settingsScrollTarget = Math.max(0.0f, Math.min(settingsScrollTarget, settingsMaxScroll));
+		settingsScroll.setTarget(settingsScrollTarget);
+
+		float scrollOff = settingsScroll.getValue();
+		float cy = contentTop - scrollOff;
+
 		for (Setting<?> s : settingsModule.settings) {
-			if (cy >= bottom) break;
-			cy = drawSetting(matrix, font, s, contentX, cy, contentW, a, mouseX, mouseY);
-			cy += POPUP_ROW_GAP;
+			float nextCy = drawSetting(matrix, font, s, contentX, cy, contentW, a, mouseX, mouseY,
+				contentTop, contentBottom);
+			cy = nextCy + POPUP_ROW_GAP;
+		}
+
+		// Scrollbar for settings popup
+		if (settingsMaxScroll > 0.5f) {
+			float trackX2 = x + w - 5.0f;
+			float trackY2 = contentTop;
+			float trackH2 = visibleH;
+			float thumbH2 = Math.max(16.0f, trackH2 * (trackH2 / (trackH2 + settingsMaxScroll)));
+			float thumbY2 = trackY2 + (scrollOff / settingsMaxScroll) * (trackH2 - thumbH2);
+			UIRender.rect(matrix, trackX2, trackY2, 2.5f, trackH2, 1.5f,
+				ColorUtil.multiplyAlpha(Theme.SCROLLBAR_BG, a));
+			UIRender.rect(matrix, trackX2, thumbY2, 2.5f, thumbH2, 1.5f,
+				ColorUtil.multiplyAlpha(Theme.SCROLLBAR_FG, a));
 		}
 
 		// Open dropdown is rendered last so it overlays subsequent rows.
@@ -538,22 +570,35 @@ public final class ClickGuiScreen extends Screen {
 	}
 
 	private float drawSetting(Matrix4f matrix, MsdfFont font, Setting<?> s,
-			float x, float y, float w, float a, int mouseX, int mouseY) {
+			float x, float y, float w, float a, int mouseX, int mouseY,
+			float clipTop, float clipBottom) {
+
+		// Skip rendering if entirely outside the clip region (but still compute height)
+		boolean visible = (y + 40.0f > clipTop) && (y < clipBottom);
 
 		// Label
-		UIRender.text(matrix, font, s.name, x, y, 8.0f,
-			ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, a), 0.05f);
+		if (visible) {
+			UIRender.text(matrix, font, s.name, x, y, 8.0f,
+				ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, a), 0.05f);
+		}
 
 		float ny = y + 12.0f;
 
 		if (s instanceof BooleanSetting bs) {
-			ny = drawBoolean(matrix, bs, x, y, w, a, mouseX, mouseY);
+			if (visible) ny = drawBoolean(matrix, bs, x, y, w, a, mouseX, mouseY);
+			else ny = y + 14.0f;
+		} else if (s instanceof ColorSetting cs) {
+			if (visible) ny = drawColor(matrix, font, cs, x, ny, w, a, mouseX, mouseY);
+			else ny += 22.0f;
 		} else if (s instanceof NumberSetting ns) {
-			ny = drawSlider(matrix, font, ns, x, ny, w, a, mouseX, mouseY);
+			if (visible) ny = drawSlider(matrix, font, ns, x, ny, w, a, mouseX, mouseY);
+			else ny += 22.0f;
 		} else if (s instanceof ModeSetting ms) {
-			ny = drawMode(matrix, font, ms, x, ny, w, a, mouseX, mouseY);
+			if (visible) ny = drawMode(matrix, font, ms, x, ny, w, a, mouseX, mouseY);
+			else ny = ny + (ms.expanded ? ms.modes.size() * 17.0f : 18.0f);
 		} else if (s instanceof MultiSetting mu) {
-			ny = drawMulti(matrix, font, mu, x, ny, w, a, mouseX, mouseY);
+			if (visible) ny = drawMulti(matrix, font, mu, x, ny, w, a, mouseX, mouseY);
+			else ny = ny + mu.options.size() * 17.0f;
 		} else {
 			ny += 14.0f;
 		}
@@ -602,6 +647,103 @@ public final class ClickGuiScreen extends Screen {
 			ColorUtil.multiplyAlpha(Theme.TEXT_SECONDARY, a));
 
 		return y + 22.0f;
+	}
+
+	/**
+	 * Draws a rainbow hue slider for a ColorSetting.
+	 * The track is divided into segments representing hue ranges (red→yellow→green→cyan→blue→magenta→red).
+	 */
+	private float drawColor(Matrix4f matrix, MsdfFont font, ColorSetting s,
+			float x, float y, float w, float a, int mouseX, int mouseY) {
+		float trackH = 10.0f;
+		float trackY = y + 2.0f;
+		float trackW = w;
+
+		// Draw the rainbow gradient as multiple segments
+		int segments = 24;
+		float segW = trackW / segments;
+		for (int i = 0; i < segments; i++) {
+			float h1 = i / (float) segments;
+			float h2 = (i + 1.0f) / segments;
+			int c1 = ColorUtil.multiplyAlpha(hsvColor(h1), a);
+			int c2 = ColorUtil.multiplyAlpha(hsvColor(h2), a);
+			float sx = x + i * segW;
+			float sw = (i == segments - 1) ? (trackW - i * segW) : segW;
+			float radius = 0.0f;
+			if (i == 0) radius = trackH * 0.4f;
+			if (i == segments - 1) radius = trackH * 0.4f;
+			UIRender.rectGradientH(matrix, sx, trackY, sw, trackH, radius, c1, c2);
+		}
+
+		// Border around the whole track
+		UIRender.border(matrix, x, trackY, trackW, trackH, trackH * 0.4f, 1.0f,
+			ColorUtil.multiplyAlpha(Theme.CARD_BORDER, a));
+
+		// Knob at current hue position
+		float frac = (float) (s.getHue() / 360.0);
+		frac = Math.max(0.0f, Math.min(1.0f, frac));
+		float knobX = x + trackW * frac - 4.0f;
+		float knobY = trackY - 2.0f;
+		UIRender.rect(matrix, knobX, knobY, 8.0f, trackH + 4.0f, 3.0f,
+			ColorUtil.multiplyAlpha(0xFFFFFFFF, a));
+		// Inner color indicator on the knob
+		UIRender.rect(matrix, knobX + 2.0f, knobY + 2.0f, 4.0f, trackH, 2.0f,
+			ColorUtil.multiplyAlpha(s.toArgb(), a));
+
+		// Value text (hue degrees)
+		String value = String.format("%.0f", s.getHue());
+		float vw = UIRender.textWidth(font, value, 7.0f);
+		UIRender.text(matrix, font, value, x + w - vw, y + 14.0f, 7.0f,
+			ColorUtil.multiplyAlpha(Theme.TEXT_SECONDARY, a));
+
+		return y + 22.0f;
+	}
+
+	/** Converts a hue (0..1) to a fully-saturated ARGB colour. */
+	private static int hsvColor(float h) {
+		float r, g, b;
+		float i = (float) Math.floor(h * 6.0f);
+		float f = h * 6.0f - i;
+		float q = 1.0f - f;
+		float t = f;
+		switch (((int) i) % 6) {
+			case 0:  r = 1; g = t; b = 0; break;
+			case 1:  r = q; g = 1; b = 0; break;
+			case 2:  r = 0; g = 1; b = t; break;
+			case 3:  r = 0; g = q; b = 1; break;
+			case 4:  r = t; g = 0; b = 1; break;
+			default: r = 1; g = 0; b = q; break;
+		}
+		int ri = Math.round(r * 255.0f);
+		int gi = Math.round(g * 255.0f);
+		int bi = Math.round(b * 255.0f);
+		return 0xFF000000 | (ri << 16) | (gi << 8) | bi;
+	}
+
+	/** Pre-computes total height of all settings in a module (for scroll bounds). */
+	private float computeSettingsHeight(Module module) {
+		float h = 0.0f;
+		for (Setting<?> s : module.settings) {
+			if (s instanceof BooleanSetting) {
+				h += 14.0f;
+			} else if (s instanceof ColorSetting) {
+				h += 12.0f + 22.0f;
+			} else if (s instanceof NumberSetting) {
+				h += 12.0f + 22.0f;
+			} else if (s instanceof ModeSetting ms) {
+				if (ms.expanded) {
+					h += 12.0f + ms.modes.size() * 17.0f;
+				} else {
+					h += 12.0f + 18.0f;
+				}
+			} else if (s instanceof MultiSetting mu) {
+				h += 12.0f + mu.options.size() * 17.0f;
+			} else {
+				h += 12.0f + 14.0f;
+			}
+			h += POPUP_ROW_GAP;
+		}
+		return h;
 	}
 
 	private float drawMode(Matrix4f matrix, MsdfFont font, ModeSetting s,
@@ -824,6 +966,8 @@ public final class ClickGuiScreen extends Screen {
 						settingsAnim.setImmediate(0.0f);
 						settingsAnim.setTarget(1.0f);
 						openDropdown = null;
+						settingsScrollTarget = 0.0f;
+						settingsScroll.setImmediate(0.0f);
 					}
 					return true;
 				}
@@ -854,7 +998,7 @@ public final class ClickGuiScreen extends Screen {
 			float popupX, float popupY, float popupW, int button) {
 		float contentX = popupX + POPUP_PAD_X;
 		float contentW = popupW - POPUP_PAD_X * 2;
-		float cy = popupY + POPUP_HEADER_H + 10.0f;
+		float cy = popupY + POPUP_HEADER_H + 10.0f - settingsScroll.getValue();
 
 		// 0. If a dropdown is open, intercept clicks on its option list first.
 		if (openDropdown != null && button == 0) {
@@ -893,6 +1037,18 @@ public final class ClickGuiScreen extends Screen {
 					return true;
 				}
 				cy = labelY + 14.0f + POPUP_ROW_GAP;
+
+			} else if (s instanceof ColorSetting cs) {
+				float trackY = controlY + 2.0f;
+				float trackW = contentW;
+				if (isInside(mouseX, mouseY, contentX, trackY - 2.0f, trackW, 14.0f) && button == 0) {
+					float frac = (float) ((mouseX - contentX) / trackW);
+					frac = Math.max(0.0f, Math.min(1.0f, frac));
+					cs.setHue(frac * 360.0);
+					draggingColor = cs;
+					return true;
+				}
+				cy = controlY + 22.0f + POPUP_ROW_GAP;
 
 			} else if (s instanceof NumberSetting ns) {
 				float trackY = controlY + 4.0f;
@@ -957,20 +1113,29 @@ public final class ClickGuiScreen extends Screen {
 
 	@Override
 	public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
-		if (draggingSlider != null && button == 0 && settingsModule != null) {
+		if (button == 0 && settingsModule != null) {
 			float panelX = (this.width  - PANEL_W) * 0.5f;
 			float popupX = panelX + PANEL_W + POPUP_GAP;
 			float contentX = popupX + POPUP_PAD_X;
 			float trackW = POPUP_W - POPUP_PAD_X * 2;
-			float frac = (float) ((mouseX - contentX) / trackW);
-			frac = Math.max(0.0f, Math.min(1.0f, frac));
-			NumberSetting ns = draggingSlider;
-			double v = ns.min + (ns.max - ns.min) * frac;
-			if (ns.step > 0.0) {
-				v = Math.round(v / ns.step) * ns.step;
+
+			if (draggingSlider != null) {
+				float frac = (float) ((mouseX - contentX) / trackW);
+				frac = Math.max(0.0f, Math.min(1.0f, frac));
+				NumberSetting ns = draggingSlider;
+				double v = ns.min + (ns.max - ns.min) * frac;
+				if (ns.step > 0.0) {
+					v = Math.round(v / ns.step) * ns.step;
+				}
+				ns.set(v);
+				return true;
 			}
-			ns.set(v);
-			return true;
+			if (draggingColor != null) {
+				float frac = (float) ((mouseX - contentX) / trackW);
+				frac = Math.max(0.0f, Math.min(1.0f, frac));
+				draggingColor.setHue(frac * 360.0);
+				return true;
+			}
 		}
 		return super.mouseDragged(mouseX, mouseY, button, deltaX, deltaY);
 	}
@@ -979,12 +1144,25 @@ public final class ClickGuiScreen extends Screen {
 	public boolean mouseReleased(double mouseX, double mouseY, int button) {
 		if (button == 0) {
 			draggingSlider = null;
+			draggingColor = null;
 		}
 		return super.mouseReleased(mouseX, mouseY, button);
 	}
 
 	@Override
 	public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+		// If the settings popup is open and the cursor is over it, scroll settings instead.
+		if (settingsModule != null && settingsAnim.getValue() > 0.5f) {
+			float panelX = (this.width  - PANEL_W) * 0.5f;
+			float panelY = (this.height - PANEL_H) * 0.5f;
+			float popupX = panelX + PANEL_W + POPUP_GAP;
+			if (isInside(mouseX, mouseY, popupX, panelY, POPUP_W, PANEL_H)) {
+				settingsScrollTarget = Math.max(0.0f,
+					Math.min(settingsMaxScroll, settingsScrollTarget - (float) verticalAmount * 20.0f));
+				settingsScroll.setTarget(settingsScrollTarget);
+				return true;
+			}
+		}
 		scrollTarget = Math.max(0.0f, Math.min(maxScroll, scrollTarget - (float) verticalAmount * 28.0f));
 		scroll.setTarget(scrollTarget);
 		return true;

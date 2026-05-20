@@ -60,18 +60,18 @@ public final class Trails extends Module {
 	private long lastSampleMs = 0L;
 
 	public Trails() {
-		super("Trails", "Animated ribbon from feet to back while running", Category.RENDER);
+		super("Trails", "Thin line trail from feet to back while moving", Category.RENDER);
 
-		this.style = new ModeSetting("Style", "Ribbon", true,
-			"Ribbon", "Wave", "Dual", "Line");
+		this.style = new ModeSetting("Style", "Line", true,
+			"Line", "Ribbon", "Wave", "Dual");
 		this.color = new ModeSetting("Color", "Magenta",
 			"Magenta", "Cyan", "Crimson", "Lime", "Gold", "Rainbow");
 
-		this.width        = new NumberSetting("Width",       1.6,   0.5,   6.0, 0.1);
+		this.width        = new NumberSetting("Width",       1.2,   0.3,   6.0, 0.1);
 		this.length       = new NumberSetting("Length",     40.0,  10.0, 200.0, 1.0);
 		this.fadeSeconds  = new NumberSetting("Fade",        2.0,   0.5,   6.0, 0.1);
 		this.brightness   = new NumberSetting("Brightness", 220.0, 40.0, 255.0, 1.0);
-		this.onlyWhenSprinting = new BooleanSetting("Only when sprinting", true);
+		this.onlyWhenSprinting = new BooleanSetting("Only when sprinting", false);
 
 		addSetting(this.style);
 		addSetting(this.color);
@@ -102,9 +102,9 @@ public final class Trails extends Module {
 			return;
 		}
 
-		// Skip when the player isn't really moving (idle sprint glitch, etc.)
+		// Skip when the player isn't really moving (standing still)
 		Vec3d v = player.getVelocity();
-		if (v.x * v.x + v.z * v.z < 0.0025) { // < 0.05 m/tick horizontally
+		if (v.x * v.x + v.z * v.z < 0.0004) { // < 0.02 m/tick horizontally
 			return;
 		}
 
