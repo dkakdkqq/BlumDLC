@@ -31,7 +31,7 @@ public final class ModuleManager {
 
 	public List<Module> byCategory(Category category) {
 		return this.modules.stream()
-			.filter(m -> m.category == category)
+			.filter(m -> m.category == category && !m.hidden)
 			.collect(Collectors.toList());
 	}
 

@@ -32,6 +32,9 @@ public abstract class HudModule extends Module {
 
 	protected HudModule(String name, String description) {
 		super(name, description, Category.RENDER);
+		// HudModules are controlled through the "HUD Modules" toggle panel,
+		// so they don't show up as individual cards in the Visual category.
+		this.hidden = true;
 	}
 
 	/** Width of the HUD as currently rendered. Used for hit-testing. */
