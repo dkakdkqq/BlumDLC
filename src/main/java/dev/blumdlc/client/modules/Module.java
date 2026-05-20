@@ -16,6 +16,14 @@ public class Module {
 	public final List<Setting<?>> settings = new ArrayList<>();
 
 	/**
+	 * When true, this module is hidden from the ClickGUI category list and
+	 * search results. It still ticks and renders normally — used for HUD
+	 * elements that should be controlled exclusively through the
+	 * "HUD Modules" toggle panel rather than appearing as their own card.
+	 */
+	public boolean hidden = false;
+
+	/**
 	 * GLFW key code bound to toggling this module, or -1 when unbound.
 	 * Set via {@link dev.blumdlc.client.bind.BindManager}; the ClickGUI lets
 	 * the user enter "bind mode" by middle-clicking a card and pressing a key.

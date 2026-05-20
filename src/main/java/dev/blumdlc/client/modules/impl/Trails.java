@@ -182,7 +182,7 @@ public final class Trails extends Module {
 
 		int strands;
 		switch (styleMode) {
-			case "Line":   strands = 1; break;
+			case "Line":   strands = 5; break;
 			case "Dual":   strands = 2; break;
 			case "Wave":   strands = 5; break;
 			case "Ribbon":
@@ -223,7 +223,7 @@ public final class Trails extends Module {
 			for (int s = 0; s < strands; s++) {
 				float t;
 				switch (styleMode) {
-					case "Line":  t = 0.55f; break;
+					case "Line":  t = strands == 1 ? 0.5f : s / (float) (strands - 1); break;
 					case "Dual":  t = (s == 0) ? 0.05f : 0.85f; break;
 					case "Wave":
 					case "Ribbon":
