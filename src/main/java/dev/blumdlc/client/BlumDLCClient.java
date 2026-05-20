@@ -2,7 +2,9 @@ package dev.blumdlc.client;
 
 import org.lwjgl.glfw.GLFW;
 
+import dev.blumdlc.client.modules.impl.Themes;
 import dev.blumdlc.client.ui.ClickGuiScreen;
+import dev.blumdlc.client.ui.Theme;
 import dev.blumdlc.client.ui.hud.HudEditor;
 import dev.blumdlc.client.util.Projection;
 import net.fabricmc.api.ClientModInitializer;
@@ -51,6 +53,11 @@ public final class BlumDLCClient implements ClientModInitializer {
 		// testing), then dispatch to all enabled modules, then draw the
 		// editor's selection overlay on top.
 		HudRenderCallback.EVENT.register((drawContext, tickCounter) -> {
+			// Pull the user-picked accent colour into Theme.* so HUD modules
+			// see the same palette as the GUI.
+			Themes.syncAll();
+			Theme.refresh();
+
 			HudEditor.update();
 			org.joml.Matrix4f matrix = drawContext.getMatrices().peek().getPositionMatrix();
 			BlumDLC.MODULES.render(matrix, tickCounter.getTickDelta(true));

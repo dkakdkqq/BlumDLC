@@ -13,6 +13,7 @@ import dev.blumdlc.client.modules.impl.PotionsHud;
 import dev.blumdlc.client.modules.impl.StaffHud;
 import dev.blumdlc.client.modules.impl.TargetESP;
 import dev.blumdlc.client.modules.impl.TargetHud;
+import dev.blumdlc.client.modules.impl.Themes;
 import dev.blumdlc.client.modules.impl.Trails;
 import dev.blumdlc.client.modules.impl.Watermark;
 
@@ -91,6 +92,9 @@ public final class ModuleManager {
 
 		// Util
 		register(new Module("ClickGUI", "Opens this menu", Category.UTIL).defaultOn());
+
+		// Themes — picker for the client accent colour
+		register(new Themes());
 	}
 
 }

@@ -6,7 +6,8 @@ public enum Category {
 	MOVEMENT("Movement"),
 	RENDER("Visual"),
 	PLAYER("Player"),
-	UTIL("Util");
+	UTIL("Util"),
+	THEMES("Themes");
 
 	public final String displayName;
 

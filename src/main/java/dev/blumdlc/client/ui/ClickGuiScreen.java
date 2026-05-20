@@ -8,6 +8,7 @@ import org.joml.Matrix4f;
 import dev.blumdlc.client.BlumDLC;
 import dev.blumdlc.client.modules.Category;
 import dev.blumdlc.client.modules.Module;
+import dev.blumdlc.client.modules.impl.Themes;
 import dev.blumdlc.client.msdf.MsdfFont;
 import dev.blumdlc.client.ui.animation.Animation;
 import dev.blumdlc.client.ui.animation.Easing;
@@ -18,32 +19,19 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.Text;
 
+
 /**
- * Celestial-style ClickGUI rendered exclusively through the project's Builder API.
+ * Recoded ClickGUI — cleaner, softer look with fluid animations.
  *
- * <h2>Layout</h2>
- * <pre>
- *   ┌──────────┬─────────────────────────┬──────────────┐
- *   │ Sidebar  │  Search + card grid     │ Settings     │
- *   │          │                         │ popup        │
- *   └──────────┴─────────────────────────┴──────────────┘
- * </pre>
+ * Layout:
+ *   Sidebar (categories incl. Themes) | Search + Card grid | Settings popup
  *
- * <h2>Architecture</h2>
- * Each region is owned by a focused unit:
- * <ul>
- *   <li>{@link SettingsPopup} — right-hand settings panel (slider, colour
- *       picker, dropdowns, scrolling). Owns its own animation and input
- *       state; this screen just forwards events to it.</li>
- *   <li>This class — panel chrome, sidebar, search bar, card grid and
- *       global input dispatch (bind-capture, ESC, etc.).</li>
- * </ul>
- *
- * <h2>Inputs</h2>
- * Mouse / keyboard events are dispatched to the popup first, falling through
- * to the panel only if the popup didn't consume them. This makes opening,
- * editing and closing the popup feel snappy without sneaking inputs through
- * to the cards underneath.
+ * Compared to the old version:
+ *   - Softer dim layer (no pure black), subtle slide-in with scale
+ *   - Cards use rounded corners with gentle gradient on active state
+ *   - Sidebar selector pill animates smoothly between categories
+ *   - Click flash ring, staggered card entrances, search focus glow
+ *   - Theme.refresh() called each frame so accent colours react live
  */
 public final class ClickGuiScreen extends Screen {
 
@@ -51,45 +39,47 @@ public final class ClickGuiScreen extends Screen {
 	//  Geometry
 	// =========================================================================
 
-	private static final float PANEL_W = 540.0f;
-	private static final float PANEL_H = 280.0f;
-	private static final float SIDEBAR_W = 110.0f;
+	private static final float PANEL_W = 520.0f;
+	private static final float PANEL_H = 270.0f;
+	private static final float SIDEBAR_W = 105.0f;
 
-	private static final float CARD_W = 96.0f;
-	private static final float CARD_H = 42.0f;
+	private static final float CARD_W = 92.0f;
+	private static final float CARD_H = 40.0f;
 	private static final float CARD_GAP_X = 5.0f;
 	private static final float CARD_GAP_Y = 5.0f;
 	private static final float CARD_AREA_PAD_X = 10.0f;
-	private static final float CARD_AREA_PAD_TOP = 40.0f;
+	private static final float CARD_AREA_PAD_TOP = 38.0f;
 	private static final float CARD_AREA_PAD_BOTTOM = 8.0f;
 	private static final int   CARDS_PER_ROW = 4;
+
 
 	// =========================================================================
 	//  Animations
 	// =========================================================================
 
-	private final Animation openAnim   = new Animation(0.0f, 360, Easing.EASE_OUT_QUINT);
-	private final Animation slideAnim  = new Animation(40.0f, 420, Easing.EASE_OUT_EXPO);
+	private final Animation openAnim  = new Animation(0.0f, 320, Easing.EASE_OUT_QUINT);
+	private final Animation slideAnim = new Animation(30.0f, 380, Easing.EASE_OUT_EXPO);
 
 	// =========================================================================
 	//  Sidebar state
 	// =========================================================================
 
 	private Category selectedCategory = Category.COMBAT;
-	private final Animation selectorY      = new Animation(0.0f,  320, Easing.EASE_OUT_EXPO);
-	private final Animation selectorHeight = new Animation(24.0f, 320, Easing.EASE_OUT_EXPO);
+	private final Animation selectorY      = new Animation(0.0f,  280, Easing.EASE_OUT_EXPO);
+	private final Animation selectorHeight = new Animation(22.0f, 280, Easing.EASE_OUT_EXPO);
 	private final Animation[] categoryHover = new Animation[Category.values().length];
-	private final Animation quitHover      = new Animation(0.0f, 180, Easing.EASE_OUT_CUBIC);
+	private final Animation quitHover      = new Animation(0.0f, 160, Easing.EASE_OUT_CUBIC);
 
 	// =========================================================================
 	//  Search bar
 	// =========================================================================
 
 	private String searchText = "";
-	private final Animation searchFocus = new Animation(0.0f, 220, Easing.EASE_OUT_CUBIC);
+	private final Animation searchFocus = new Animation(0.0f, 200, Easing.EASE_OUT_CUBIC);
 	private boolean searchActive = false;
 	private long lastBlinkSwap = System.currentTimeMillis();
 	private boolean caretVisible = true;
+
 
 	// =========================================================================
 	//  Card grid
@@ -99,35 +89,35 @@ public final class ClickGuiScreen extends Screen {
 	private final List<Animation> cardHover  = new ArrayList<>();
 	private final List<Animation> cardEnter  = new ArrayList<>();
 	private final List<Animation> cardActive = new ArrayList<>();
-	private final List<Animation> cardClickFlash = new ArrayList<>();
+	private final List<Animation> cardFlash  = new ArrayList<>();
 
-	private final Animation scroll = new Animation(0.0f, 220, Easing.EASE_OUT_CUBIC);
+	private final Animation scroll = new Animation(0.0f, 200, Easing.EASE_OUT_CUBIC);
 	private float scrollTarget = 0.0f;
 	private float maxScroll = 0.0f;
 
 	// =========================================================================
-	//  Settings popup (own its own state)
+	//  Settings popup
 	// =========================================================================
 
 	private final SettingsPopup popup = new SettingsPopup();
 
 	// =========================================================================
-	//  Bind capture state
+	//  Bind capture
 	// =========================================================================
 
-	/** Module currently waiting for a key press to set its bind (null == none). */
 	private Module bindingModule = null;
 
 	// =========================================================================
-	//  Lifecycle
+	//  Constructor / lifecycle
 	// =========================================================================
 
 	public ClickGuiScreen() {
 		super(Text.literal("Blum"));
 		for (int i = 0; i < categoryHover.length; i++) {
-			categoryHover[i] = new Animation(0.0f, 180, Easing.EASE_OUT_CUBIC);
+			categoryHover[i] = new Animation(0.0f, 160, Easing.EASE_OUT_CUBIC);
 		}
 	}
+
 
 	@Override
 	protected void init() {
@@ -138,105 +128,79 @@ public final class ClickGuiScreen extends Screen {
 		updateSelectorAnim(true);
 	}
 
-	private void rebuildVisible(boolean stagger) {
-		this.visibleModules = BlumDLC.MODULES.search(selectedCategory, searchText);
-
-		// If the popup's module just left the visible list, detach it.
-		Module popupModule = popup.getModule();
-		if (popupModule != null && !visibleModules.contains(popupModule)) {
-			popup.detach();
-		}
-
-		int size = visibleModules.size();
-
-		// Reuse existing animation lists — only add/remove what's necessary
-		// to match the new size. Avoids GC churn on FoldCraft Launcher.
-		resizeAnimList(cardHover, size, () -> new Animation(0.0f, 160, Easing.EASE_OUT_CUBIC));
-		resizeAnimList(cardClickFlash, size, () -> new Animation(0.0f, 280, Easing.EASE_OUT_CUBIC));
-
-		// Enter and active anims need special handling (state-dependent)
-		while (cardEnter.size() > size) cardEnter.remove(cardEnter.size() - 1);
-		while (cardActive.size() > size) cardActive.remove(cardActive.size() - 1);
-
-		for (int i = 0; i < size; i++) {
-			if (i < cardEnter.size()) {
-				// Existing slot — just re-trigger if staggering
-				if (stagger) {
-					cardEnter.get(i).setImmediate(0.0f);
-					cardEnter.get(i).setTarget(1.0f, 25L * i);
-				}
-			} else {
-				Animation enter = new Animation(0.0f, 380, Easing.EASE_OUT_QUINT);
-				if (stagger) {
-					enter.setTarget(1.0f, 25L * i);
-				} else {
-					enter.setImmediate(1.0f);
-				}
-				cardEnter.add(enter);
-			}
-
-			if (i < cardActive.size()) {
-				cardActive.get(i).setTarget(visibleModules.get(i).enabled ? 1.0f : 0.0f);
-			} else {
-				Animation activeAnim = new Animation(0.0f, 220, Easing.EASE_OUT_CUBIC);
-				activeAnim.setImmediate(visibleModules.get(i).enabled ? 1.0f : 0.0f);
-				cardActive.add(activeAnim);
-			}
-		}
-
-		clampScroll();
-	}
-
-	/** Resizes an animation list to the desired size, reusing existing objects. */
-	private static void resizeAnimList(List<Animation> list, int size,
-			java.util.function.Supplier<Animation> factory) {
-		while (list.size() > size) list.remove(list.size() - 1);
-		while (list.size() < size) list.add(factory.get());
-	}
-
-	private void updateSelectorAnim(boolean immediate) {
-		int idx = selectedCategory.ordinal();
-		float y = categoryRowY(idx);
-		if (immediate) {
-			selectorY.setImmediate(y);
-			selectorHeight.setImmediate(24.0f);
-		} else {
-			selectorY.setTarget(y);
-			selectorHeight.setTarget(24.0f);
-		}
-	}
-
-	private static float categoryRowY(int index) {
-		return 62.0f + index * 26.0f;
-	}
-
-	private void clampScroll() {
-		int rows = (int) Math.ceil(visibleModules.size() / (float) CARDS_PER_ROW);
-		float contentHeight = rows * (CARD_H + CARD_GAP_Y) - CARD_GAP_Y;
-		float visibleHeight = PANEL_H - CARD_AREA_PAD_TOP - CARD_AREA_PAD_BOTTOM;
-		this.maxScroll = Math.max(0.0f, contentHeight - visibleHeight);
-		this.scrollTarget = Math.max(0.0f, Math.min(scrollTarget, maxScroll));
-		this.scroll.setTarget(scrollTarget);
-	}
+	@Override
+	public boolean shouldPause() { return false; }
 
 	@Override
-	public boolean shouldPause() {
-		return false;
-	}
-
-	@Override
-	public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
-		// Disable vanilla blur; we draw our own dim layer in render().
-	}
+	public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) { }
 
 	@Override
 	public void close() {
 		openAnim.setTarget(0.0f);
-		slideAnim.setTarget(40.0f);
+		slideAnim.setTarget(30.0f);
 		bindingModule = null;
 		popup.close();
 		super.close();
 	}
+
+	// =========================================================================
+	//  Rebuild helpers
+	// =========================================================================
+
+	private void rebuildVisible(boolean stagger) {
+		this.visibleModules = BlumDLC.MODULES.search(selectedCategory, searchText);
+		Module popupMod = popup.getModule();
+		if (popupMod != null && !visibleModules.contains(popupMod)) popup.detach();
+
+		int size = visibleModules.size();
+		resize(cardHover, size, () -> new Animation(0.0f, 140, Easing.EASE_OUT_CUBIC));
+		resize(cardFlash, size, () -> new Animation(0.0f, 260, Easing.EASE_OUT_CUBIC));
+
+		while (cardEnter.size() > size) cardEnter.remove(cardEnter.size() - 1);
+		while (cardActive.size() > size) cardActive.remove(cardActive.size() - 1);
+
+
+		for (int i = 0; i < size; i++) {
+			if (i < cardEnter.size()) {
+				if (stagger) { cardEnter.get(i).setImmediate(0.0f); cardEnter.get(i).setTarget(1.0f, 20L * i); }
+			} else {
+				Animation e = new Animation(0.0f, 340, Easing.EASE_OUT_QUINT);
+				if (stagger) e.setTarget(1.0f, 20L * i); else e.setImmediate(1.0f);
+				cardEnter.add(e);
+			}
+			if (i < cardActive.size()) {
+				cardActive.get(i).setTarget(visibleModules.get(i).enabled ? 1.0f : 0.0f);
+			} else {
+				Animation a = new Animation(0.0f, 200, Easing.EASE_OUT_CUBIC);
+				a.setImmediate(visibleModules.get(i).enabled ? 1.0f : 0.0f);
+				cardActive.add(a);
+			}
+		}
+		clampScroll();
+	}
+
+	private static void resize(List<Animation> list, int size, java.util.function.Supplier<Animation> f) {
+		while (list.size() > size) list.remove(list.size() - 1);
+		while (list.size() < size) list.add(f.get());
+	}
+
+	private void updateSelectorAnim(boolean immediate) {
+		float y = catRowY(selectedCategory.ordinal());
+		if (immediate) { selectorY.setImmediate(y); selectorHeight.setImmediate(22.0f); }
+		else { selectorY.setTarget(y); selectorHeight.setTarget(22.0f); }
+	}
+
+	private static float catRowY(int idx) { return 58.0f + idx * 24.0f; }
+
+	private void clampScroll() {
+		int rows = (int) Math.ceil(visibleModules.size() / (float) CARDS_PER_ROW);
+		float content = rows * (CARD_H + CARD_GAP_Y) - CARD_GAP_Y;
+		float visible = PANEL_H - CARD_AREA_PAD_TOP - CARD_AREA_PAD_BOTTOM;
+		maxScroll = Math.max(0.0f, content - visible);
+		scrollTarget = Math.max(0.0f, Math.min(scrollTarget, maxScroll));
+		scroll.setTarget(scrollTarget);
+	}
+
 
 	// =========================================================================
 	//  Render
@@ -244,293 +208,270 @@ public final class ClickGuiScreen extends Screen {
 
 	@Override
 	public void render(DrawContext context, int mouseX, int mouseY, float deltaTicks) {
+		// Sync theme colours every frame so live-changing palette is reflected
+		Themes.syncAll();
+		Theme.refresh();
+
 		Matrix4f matrix = context.getMatrices().peek().getPositionMatrix();
 		MsdfFont font = Fonts.BIKO.get();
-
 		float open = openAnim.getValue();
 		float slide = slideAnim.getValue();
 
-		// Dim
+		// Dim backdrop
 		UIRender.rect(matrix, 0, 0, this.width, this.height, 0,
 			ColorUtil.multiplyAlpha(Theme.DIM, open));
 
-		// Panel rect (with subtle scale-in)
-		float panelX = (this.width  - PANEL_W) * 0.5f;
-		float panelY = (this.height - PANEL_H) * 0.5f + slide;
-		float scale = 0.96f + 0.04f * open;
-		float scaledW = PANEL_W * scale;
-		float scaledH = PANEL_H * scale;
-		panelX += (PANEL_W - scaledW) * 0.5f;
-		panelY += (PANEL_H - scaledH) * 0.5f;
+		// Panel with scale-in
+		float px = (this.width - PANEL_W) * 0.5f;
+		float py = (this.height - PANEL_H) * 0.5f + slide;
+		float sc = 0.97f + 0.03f * open;
+		float sw = PANEL_W * sc, sh = PANEL_H * sc;
+		px += (PANEL_W - sw) * 0.5f;
+		py += (PANEL_H - sh) * 0.5f;
 
-		drawPanel(matrix, font, panelX, panelY, scaledW, scaledH, open, mouseX, mouseY);
-
-		// Settings popup hangs to the right of the panel
-		popup.render(matrix, font, panelX, panelY, scaledW, scaledH, open, mouseX, mouseY);
-
+		drawPanel(matrix, font, px, py, sw, sh, open, mouseX, mouseY);
+		popup.render(matrix, font, px, py, sw, sh, open, mouseX, mouseY);
 		super.render(context, mouseX, mouseY, deltaTicks);
 	}
 
-	private void drawPanel(Matrix4f matrix, MsdfFont font,
-			float x, float y, float w, float h, float open, int mouseX, int mouseY) {
-
-		UIRender.rect(matrix, x, y, w, h, 14.0f, ColorUtil.multiplyAlpha(Theme.PANEL_BG, open));
-		UIRender.border(matrix, x, y, w, h, 14.0f, 1.0f,
+	private void drawPanel(Matrix4f m, MsdfFont font,
+			float x, float y, float w, float h, float open, int mx, int my) {
+		// Background
+		UIRender.rect(m, x, y, w, h, 12.0f, ColorUtil.multiplyAlpha(Theme.PANEL_BG, open));
+		UIRender.border(m, x, y, w, h, 12.0f, 1.0f,
 			ColorUtil.multiplyAlpha(Theme.PANEL_BORDER, open));
 
 		float sbW = SIDEBAR_W * (w / PANEL_W);
-		drawSidebar(matrix, font, x, y, sbW, h, open, mouseX, mouseY);
+		drawSidebar(m, font, x, y, sbW, h, open, mx, my);
 
-		UIRender.rect(matrix, x + sbW, y + 12, 1.0f, h - 24,
-			0.0f, ColorUtil.multiplyAlpha(Theme.DIVIDER, open));
+		// Divider
+		UIRender.rect(m, x + sbW, y + 10, 1.0f, h - 20, 0.0f,
+			ColorUtil.multiplyAlpha(Theme.DIVIDER, open));
 
-		drawMain(matrix, font, x + sbW, y, w - sbW, h, open, mouseX, mouseY);
+		drawMain(m, font, x + sbW, y, w - sbW, h, open, mx, my);
 	}
+
 
 	// ---------------------------------------------------------------------
 	//  Sidebar
 	// ---------------------------------------------------------------------
 
-	private void drawSidebar(Matrix4f matrix, MsdfFont font,
-			float x, float y, float w, float h, float open, int mouseX, int mouseY) {
+	private void drawSidebar(Matrix4f m, MsdfFont font,
+			float x, float y, float w, float h, float open, int mx, int my) {
+		UIRender.rect(m, x, y, w, h, 12.0f,
+			ColorUtil.multiplyAlpha(Theme.SIDEBAR_BG, open));
 
-		UIRender.rect(matrix, x, y, w, h, 14.0f, ColorUtil.multiplyAlpha(Theme.SIDEBAR_BG, open));
-
-		// Brand
-		float logoSize = 22.0f;
-		float logoX = x + 14.0f;
-		float logoY = y + 16.0f;
-		UIRender.rect(matrix, logoX, logoY, logoSize, logoSize, 11.0f,
-			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, 0.18f * open));
-		UIRender.rectGradientV(matrix, logoX + 3, logoY + 3, logoSize - 6, logoSize - 6, 8.0f,
+		// Logo area
+		float logoX = x + 12.0f, logoY = y + 14.0f, logoS = 20.0f;
+		UIRender.rect(m, logoX, logoY, logoS, logoS, 10.0f,
+			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, 0.15f * open));
+		UIRender.rectGradientV(m, logoX + 3, logoY + 3, logoS - 6, logoS - 6, 7.0f,
 			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, open),
 			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO, open));
-		UIRender.rect(matrix, logoX + 6, logoY + 5, 3, 2, 1.0f,
-			ColorUtil.withAlpha(0xFFFFFFFF, 0.6f * open));
 
-		UIRender.text(matrix, font, "Blum", x + 42.0f, logoY + 6.0f,
-			12.0f, ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, open), 0.06f);
-		UIRender.text(matrix, font, "Modules", x + 14.0f, y + 48.0f,
-			7.0f, ColorUtil.multiplyAlpha(Theme.TEXT_MUTED, open));
+		UIRender.text(m, font, "Blum", x + 38.0f, logoY + 5.0f, 11.0f,
+			ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, open), 0.06f);
 
-		// Selector pill
+		UIRender.text(m, font, "modules", x + 12.0f, y + 44.0f, 6.5f,
+			ColorUtil.multiplyAlpha(Theme.TEXT_MUTED, open));
+
+		// Animated selector pill
 		float selY = y + selectorY.getValue();
 		float selH = selectorHeight.getValue();
-		UIRender.rectGradientH(matrix, x + 10.0f, selY, w - 20.0f, selH, 7.0f,
-			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, open),
-			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO, open));
+		UIRender.rectGradientH(m, x + 8.0f, selY, w - 16.0f, selH, 6.0f,
+			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, 0.85f * open),
+			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO, 0.85f * open));
 
+
+		// Category rows
 		Category[] cats = Category.values();
 		for (int i = 0; i < cats.length; i++) {
-			float rowY = y + categoryRowY(i);
-			boolean selected = selectedCategory == cats[i];
-			boolean hovered = isInside(mouseX, mouseY, x + 10.0f, rowY, w - 20.0f, 24.0f);
-			categoryHover[i].setTarget(hovered && !selected ? 1.0f : 0.0f);
-
-			float hov = categoryHover[i].getValue();
-			if (!selected && hov > 0.001f) {
-				UIRender.rect(matrix, x + 10.0f, rowY, w - 20.0f, 24.0f, 7.0f,
-					ColorUtil.multiplyAlpha(0x10FFFFFF, hov * open));
+			float rowY = y + catRowY(i);
+			boolean sel = selectedCategory == cats[i];
+			boolean hov = inside(mx, my, x + 8.0f, rowY, w - 16.0f, 22.0f);
+			categoryHover[i].setTarget(hov && !sel ? 1.0f : 0.0f);
+			float ht = categoryHover[i].getValue();
+			if (!sel && ht > 0.001f) {
+				UIRender.rect(m, x + 8.0f, rowY, w - 16.0f, 22.0f, 6.0f,
+					ColorUtil.multiplyAlpha(0x0DFFFFFF, ht * open));
 			}
-
-			int textColor = selected
+			int tc = sel
 				? ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, open)
-				: ColorUtil.lerp(Theme.TEXT_SECONDARY, Theme.TEXT_PRIMARY, hov * 0.6f);
-			textColor = ColorUtil.multiplyAlpha(textColor, open);
-			UIRender.text(matrix, font, cats[i].displayName, x + 20.0f, rowY + 7.0f, 8.5f, textColor);
+				: ColorUtil.multiplyAlpha(
+					ColorUtil.lerp(Theme.TEXT_SECONDARY, Theme.TEXT_PRIMARY, ht * 0.5f), open);
+			UIRender.text(m, font, cats[i].displayName, x + 18.0f, rowY + 6.0f, 8.0f, tc);
 		}
 
-		// Quit row
-		float quitY = y + h - 32.0f;
-		boolean quitHovered = isInside(mouseX, mouseY, x + 10.0f, quitY, w - 20.0f, 22.0f);
-		quitHover.setTarget(quitHovered ? 1.0f : 0.0f);
+		// Quit
+		float quitY = y + h - 30.0f;
+		boolean qHov = inside(mx, my, x + 8.0f, quitY, w - 16.0f, 20.0f);
+		quitHover.setTarget(qHov ? 1.0f : 0.0f);
 		float qh = quitHover.getValue();
 		if (qh > 0.001f) {
-			UIRender.rect(matrix, x + 10.0f, quitY, w - 20.0f, 22.0f, 7.0f,
-				ColorUtil.multiplyAlpha(Theme.DANGER, 0.16f * qh * open));
+			UIRender.rect(m, x + 8.0f, quitY, w - 16.0f, 20.0f, 6.0f,
+				ColorUtil.multiplyAlpha(Theme.DANGER, 0.14f * qh * open));
 		}
-		int quitColor = ColorUtil.lerp(Theme.TEXT_SECONDARY, Theme.DANGER, qh);
-		UIRender.text(matrix, font, "Quit", x + 20.0f, quitY + 6.0f, 8.5f,
-			ColorUtil.multiplyAlpha(quitColor, open));
+		int qc = ColorUtil.lerp(Theme.TEXT_SECONDARY, Theme.DANGER, qh);
+		UIRender.text(m, font, "Close", x + 18.0f, quitY + 5.0f, 8.0f,
+			ColorUtil.multiplyAlpha(qc, open));
 	}
 
+
 	// ---------------------------------------------------------------------
-	//  Main: search + card grid
+	//  Main area: search + cards
 	// ---------------------------------------------------------------------
 
-	private void drawMain(Matrix4f matrix, MsdfFont font,
-			float x, float y, float w, float h, float open, int mouseX, int mouseY) {
-
+	private void drawMain(Matrix4f m, MsdfFont font,
+			float x, float y, float w, float h, float open, int mx, int my) {
 		// Search bar
-		float searchX = x + 14.0f;
-		float searchY = y + 14.0f;
-		float searchW = w - 28.0f;
-		float searchH = 22.0f;
+		float sx = x + 12.0f, sy = y + 12.0f;
+		float sw = w - 24.0f, sh = 20.0f;
 		float focus = searchFocus.getValue();
-		int focusBorder = ColorUtil.lerp(0x33FFFFFF, Theme.ACCENT, focus);
+		int borderC = ColorUtil.lerp(0x28FFFFFF, Theme.ACCENT, focus);
 
-		UIRender.rect(matrix, searchX, searchY, searchW, searchH, 8.0f,
+		UIRender.rect(m, sx, sy, sw, sh, 7.0f,
 			ColorUtil.multiplyAlpha(Theme.SEARCH_BG, open));
-		UIRender.border(matrix, searchX, searchY, searchW, searchH, 8.0f, 1.0f,
-			ColorUtil.multiplyAlpha(focusBorder, open));
+		UIRender.border(m, sx, sy, sw, sh, 7.0f, 1.0f,
+			ColorUtil.multiplyAlpha(borderC, open));
 
-		String displayText = searchText.isEmpty() ? "Search" : searchText;
-		int searchColor = searchText.isEmpty() ? Theme.TEXT_MUTED : Theme.TEXT_PRIMARY;
-		UIRender.text(matrix, font, displayText, searchX + 10.0f, searchY + 7.0f, 8.0f,
-			ColorUtil.multiplyAlpha(searchColor, open));
+		String disp = searchText.isEmpty() ? "Search..." : searchText;
+		int sc = searchText.isEmpty() ? Theme.TEXT_MUTED : Theme.TEXT_PRIMARY;
+		UIRender.text(m, font, disp, sx + 8.0f, sy + 6.0f, 7.5f,
+			ColorUtil.multiplyAlpha(sc, open));
 
+		// Caret
 		long now = System.currentTimeMillis();
-		if (now - lastBlinkSwap > 530L) {
-			lastBlinkSwap = now;
-			caretVisible = !caretVisible;
-		}
+		if (now - lastBlinkSwap > 520L) { lastBlinkSwap = now; caretVisible = !caretVisible; }
 		if (searchActive && caretVisible) {
-			float caretX = searchX + 10.0f + UIRender.textWidth(font, searchText, 8.0f) + 1.0f;
-			UIRender.rect(matrix, caretX, searchY + 5.0f, 1.0f, searchH - 10.0f, 0.5f,
+			float cx = sx + 8.0f + UIRender.textWidth(font, searchText, 7.5f) + 1.0f;
+			UIRender.rect(m, cx, sy + 4.0f, 1.0f, sh - 8.0f, 0.5f,
 				ColorUtil.multiplyAlpha(Theme.ACCENT, open));
 		}
 
-		drawIcon(matrix, x + w - 44.0f, searchY + 4.0f, 12.0f, ColorUtil.multiplyAlpha(0x80FFFFFF, open));
-		drawIcon(matrix, x + w - 26.0f, searchY + 4.0f, 12.0f, ColorUtil.multiplyAlpha(0x80FFFFFF, open));
-
-		drawCards(matrix, font, x, y, w, h, open, mouseX, mouseY);
+		drawCards(m, font, x, y, w, h, open, mx, my);
 	}
 
-	private void drawIcon(Matrix4f matrix, float x, float y, float size, int color) {
-		UIRender.rect(matrix, x, y, size, size, 4.0f, ColorUtil.withAlpha(color, 0.22f));
-		UIRender.rect(matrix, x + 3, y + 4, size - 6, 1.5f, 0.5f, color);
-		UIRender.rect(matrix, x + 3, y + 7, size - 6, 1.5f, 0.5f, color);
-		UIRender.rect(matrix, x + 3, y + 10, size - 9, 1.5f, 0.5f, color);
-	}
 
-	private void drawCards(Matrix4f matrix, MsdfFont font,
-			float x, float y, float w, float h, float open, int mouseX, int mouseY) {
-
+	private void drawCards(Matrix4f m, MsdfFont font,
+			float x, float y, float w, float h, float open, int mx, int my) {
 		float clipTop = y + CARD_AREA_PAD_TOP - 4.0f;
-		float clipBottom = y + h - CARD_AREA_PAD_BOTTOM;
+		float clipBot = y + h - CARD_AREA_PAD_BOTTOM;
+		float ox = x + CARD_AREA_PAD_X;
+		float oy = y + CARD_AREA_PAD_TOP - scroll.getValue();
+		Module popMod = popup.getModule();
 
-		float originX = x + CARD_AREA_PAD_X;
-		float originY = y + CARD_AREA_PAD_TOP - scroll.getValue();
-
-		Module popupModule = popup.getModule();
 		for (int i = 0; i < visibleModules.size(); i++) {
-			int row = i / CARDS_PER_ROW;
-			int col = i % CARDS_PER_ROW;
-			float cx = originX + col * (CARD_W + CARD_GAP_X);
-			float cy = originY + row * (CARD_H + CARD_GAP_Y);
-
-			if (cy + CARD_H < clipTop - 30.0f || cy > clipBottom + 30.0f) continue;
-
-			drawCard(matrix, font, i, popupModule, cx, cy, clipTop, clipBottom, open, mouseX, mouseY);
+			int row = i / CARDS_PER_ROW, col = i % CARDS_PER_ROW;
+			float cx = ox + col * (CARD_W + CARD_GAP_X);
+			float cy = oy + row * (CARD_H + CARD_GAP_Y);
+			if (cy + CARD_H < clipTop - 20 || cy > clipBot + 20) continue;
+			drawCard(m, font, i, popMod, cx, cy, clipTop, clipBot, open, mx, my);
 		}
 
-		// Right-edge card scrollbar
+		// Scrollbar
 		if (maxScroll > 0.5f) {
-			float trackX = x + w - 6.0f;
-			float trackY = y + CARD_AREA_PAD_TOP;
-			float trackH = h - CARD_AREA_PAD_TOP - CARD_AREA_PAD_BOTTOM;
-			float thumbH = Math.max(24.0f, trackH * (trackH / (trackH + maxScroll)));
-			float thumbY = trackY + (scroll.getValue() / maxScroll) * (trackH - thumbH);
-			UIRender.rect(matrix, trackX, trackY, 3.0f, trackH, 1.5f,
+			float tX = x + w - 5.0f, tY = y + CARD_AREA_PAD_TOP;
+			float tH = h - CARD_AREA_PAD_TOP - CARD_AREA_PAD_BOTTOM;
+			float thumbH = Math.max(20.0f, tH * (tH / (tH + maxScroll)));
+			float thumbY = tY + (scroll.getValue() / maxScroll) * (tH - thumbH);
+			UIRender.rect(m, tX, tY, 2.5f, tH, 1.0f,
 				ColorUtil.multiplyAlpha(Theme.SCROLLBAR_BG, open));
-			UIRender.rect(matrix, trackX, thumbY, 3.0f, thumbH, 1.5f,
+			UIRender.rect(m, tX, thumbY, 2.5f, thumbH, 1.0f,
 				ColorUtil.multiplyAlpha(Theme.SCROLLBAR_FG, open));
 		}
 	}
 
-	private void drawCard(Matrix4f matrix, MsdfFont font, int i, Module popupModule,
-			float cx, float cy, float clipTop, float clipBottom,
-			float open, int mouseX, int mouseY) {
 
-		Module module = visibleModules.get(i);
-		Animation enter = cardEnter.get(i);
-		Animation hoverA = cardHover.get(i);
-		Animation activeA = cardActive.get(i);
-		Animation flashA = cardClickFlash.get(i);
+	private void drawCard(Matrix4f m, MsdfFont font, int i, Module popMod,
+			float cx, float cy, float clipTop, float clipBot,
+			float open, int mx, int my) {
+		Module mod = visibleModules.get(i);
+		float enterT = cardEnter.get(i).getValue();
+		float cardX = cx + (1.0f - enterT) * 10.0f;
+		float alpha = enterT * open;
 
-		float enterT = enter.getValue();
-		float cardX = cx + (1.0f - enterT) * 14.0f;
-		float cardAlpha = enterT * open;
+		boolean hov = inside(mx, my, cardX, cy, CARD_W, CARD_H)
+			&& my >= clipTop && my <= clipBot;
+		cardHover.get(i).setTarget(hov ? 1.0f : 0.0f);
+		cardActive.get(i).setTarget(mod.enabled ? 1.0f : 0.0f);
 
-		boolean hovered = isInside(mouseX, mouseY, cardX, cy, CARD_W, CARD_H)
-			&& mouseY >= clipTop && mouseY <= clipBottom;
-		hoverA.setTarget(hovered ? 1.0f : 0.0f);
-		activeA.setTarget(module.enabled ? 1.0f : 0.0f);
+		float hovT = cardHover.get(i).getValue();
+		float actT = cardActive.get(i).getValue();
+		float flT  = cardFlash.get(i).getValue();
 
-		float hoverT = hoverA.getValue();
-		float activeT = activeA.getValue();
-		float flashT = flashA.getValue();
-
-		// Background
-		int bgInactive = ColorUtil.lerp(Theme.CARD_BG, Theme.CARD_HOVER, hoverT);
-		if (activeT < 0.999f) {
-			UIRender.rect(matrix, cardX, cy, CARD_W, CARD_H, 10.0f,
-				ColorUtil.multiplyAlpha(bgInactive, cardAlpha * (1.0f - activeT)));
+		// Inactive bg
+		if (actT < 0.999f) {
+			int bg = ColorUtil.lerp(Theme.CARD_BG, Theme.CARD_HOVER, hovT);
+			UIRender.rect(m, cardX, cy, CARD_W, CARD_H, 8.0f,
+				ColorUtil.multiplyAlpha(bg, alpha * (1.0f - actT)));
 		}
-		if (activeT > 0.001f) {
-			UIRender.rectGradientH(matrix, cardX, cy, CARD_W, CARD_H, 10.0f,
-				ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, cardAlpha * activeT),
-				ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO,   cardAlpha * activeT));
+		// Active gradient
+		if (actT > 0.001f) {
+			UIRender.rectGradientH(m, cardX, cy, CARD_W, CARD_H, 8.0f,
+				ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, alpha * actT * 0.85f),
+				ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO, alpha * actT * 0.85f));
 		}
-		if (hoverT > 0.001f) {
-			UIRender.rectGradientV(matrix, cardX, cy, CARD_W, CARD_H * 0.5f, 10.0f,
-				ColorUtil.multiplyAlpha(0xFFFFFFFF, 0.05f * hoverT * cardAlpha),
-				0x00000000);
+		// Hover shine
+		if (hovT > 0.001f) {
+			UIRender.rectGradientV(m, cardX, cy, CARD_W, CARD_H * 0.45f, 8.0f,
+				ColorUtil.multiplyAlpha(0xFFFFFFFF, 0.04f * hovT * alpha), 0x00000000);
 		}
 
-		// Click ring flash
-		if (flashT > 0.001f && flashT < 0.999f) {
-			float ringAlpha = (1.0f - flashT) * 0.6f * cardAlpha;
-			UIRender.border(matrix, cardX - flashT * 2.0f, cy - flashT * 2.0f,
-				CARD_W + flashT * 4.0f, CARD_H + flashT * 4.0f,
-				10.0f + flashT * 4.0f, 1.5f,
-				ColorUtil.multiplyAlpha(Theme.ACCENT, ringAlpha));
+
+		// Click flash ring
+		if (flT > 0.001f && flT < 0.999f) {
+			float ra = (1.0f - flT) * 0.5f * alpha;
+			UIRender.border(m, cardX - flT * 2, cy - flT * 2,
+				CARD_W + flT * 4, CARD_H + flT * 4,
+				8.0f + flT * 3, 1.2f,
+				ColorUtil.multiplyAlpha(Theme.ACCENT, ra));
 		}
 
-		// Border (highlighted when popup is showing this card)
-		if (popupModule == module) {
-			UIRender.border(matrix, cardX, cy, CARD_W, CARD_H, 10.0f, 1.5f,
-				ColorUtil.multiplyAlpha(Theme.ACCENT, 0.9f * cardAlpha));
+		// Border — highlighted for popup target
+		if (popMod == mod) {
+			UIRender.border(m, cardX, cy, CARD_W, CARD_H, 8.0f, 1.2f,
+				ColorUtil.multiplyAlpha(Theme.ACCENT, 0.8f * alpha));
 		} else {
-			UIRender.border(matrix, cardX, cy, CARD_W, CARD_H, 10.0f, 1.0f,
-				ColorUtil.multiplyAlpha(Theme.CARD_BORDER, 0.6f * (1.0f - activeT) * cardAlpha));
+			UIRender.border(m, cardX, cy, CARD_W, CARD_H, 8.0f, 0.8f,
+				ColorUtil.multiplyAlpha(Theme.CARD_BORDER, 0.5f * (1.0f - actT) * alpha));
 		}
 
-		// Title + description
-		int titleColor = ColorUtil.lerp(Theme.TEXT_PRIMARY, 0xFFFFFFFF, activeT);
-		UIRender.text(matrix, font, module.name, cardX + 9.0f, cy + 8.0f, 8.5f,
-			ColorUtil.multiplyAlpha(titleColor, cardAlpha), 0.05f);
-		int descColor = ColorUtil.lerp(Theme.TEXT_SECONDARY, 0xFFE9D2F2, activeT);
-		UIRender.text(matrix, font, module.description, cardX + 9.0f, cy + 22.0f, 6.0f,
-			ColorUtil.multiplyAlpha(descColor, cardAlpha), 0.04f);
+		// Title
+		int titleC = ColorUtil.lerp(Theme.TEXT_PRIMARY, 0xFFFFFFFF, actT);
+		UIRender.text(m, font, mod.name, cardX + 8.0f, cy + 8.0f, 8.0f,
+			ColorUtil.multiplyAlpha(titleC, alpha), 0.05f);
+		// Description
+		int descC = ColorUtil.lerp(Theme.TEXT_SECONDARY, 0xFFE0D0F0, actT);
+		UIRender.text(m, font, mod.description, cardX + 8.0f, cy + 20.0f, 5.8f,
+			ColorUtil.multiplyAlpha(descC, alpha), 0.04f);
 
-		// "..." hint when the card has settings
-		if (!module.settings.isEmpty()) {
-			float ix = cardX + CARD_W - 14.0f;
-			float iy = cy + 8.0f;
-			int dot = ColorUtil.multiplyAlpha(0xFFFFFFFF, 0.55f * cardAlpha);
-			UIRender.rect(matrix, ix,        iy, 2.0f, 2.0f, 1.0f, dot);
-			UIRender.rect(matrix, ix + 4.0f, iy, 2.0f, 2.0f, 1.0f, dot);
-			UIRender.rect(matrix, ix + 8.0f, iy, 2.0f, 2.0f, 1.0f, dot);
+		// Settings dots hint
+		if (!mod.settings.isEmpty()) {
+			float dx = cardX + CARD_W - 13.0f, dy = cy + 8.0f;
+			int dc = ColorUtil.multiplyAlpha(0xFFFFFFFF, 0.45f * alpha);
+			UIRender.rect(m, dx, dy, 2, 2, 1, dc);
+			UIRender.rect(m, dx + 3.5f, dy, 2, 2, 1, dc);
 		}
 
-		// Bind chip in the bottom-right of the card
-		boolean awaitingBind = (bindingModule == module);
-		if (awaitingBind || KeyName.isBound(module.keybind)) {
-			String label = awaitingBind ? "..." : "[" + KeyName.describe(module.keybind) + "]";
-			float kfs = 6.0f;
-			float kw = UIRender.textWidth(font, label, kfs) + 6.0f;
+
+		// Bind chip
+		boolean awaiting = (bindingModule == mod);
+		if (awaiting || KeyName.isBound(mod.keybind)) {
+			String lbl = awaiting ? "..." : "[" + KeyName.describe(mod.keybind) + "]";
+			float kfs = 5.5f;
+			float kw = UIRender.textWidth(font, lbl, kfs) + 5.0f;
 			float kh = kfs + 4.0f;
-			float kx = cardX + CARD_W - kw - 6.0f;
-			float ky = cy + CARD_H - kh - 5.0f;
-			int chipBg = awaitingBind ? Theme.ACCENT : 0x99000000;
-			UIRender.rect(matrix, kx, ky, kw, kh, kh * 0.5f,
-				ColorUtil.multiplyAlpha(chipBg, cardAlpha));
-			int textColor = awaitingBind ? 0xFF14141C : Theme.TEXT_PRIMARY;
-			UIRender.text(matrix, font, label, kx + 3.0f, ky + 2.0f, kfs,
-				ColorUtil.multiplyAlpha(textColor, cardAlpha), 0.05f);
+			float kx = cardX + CARD_W - kw - 5.0f;
+			float ky = cy + CARD_H - kh - 4.0f;
+			int chipBg = awaiting ? Theme.ACCENT : 0x88000000;
+			UIRender.rect(m, kx, ky, kw, kh, kh * 0.5f,
+				ColorUtil.multiplyAlpha(chipBg, alpha));
+			int ktc = awaiting ? 0xFF0E1018 : Theme.TEXT_PRIMARY;
+			UIRender.text(m, font, lbl, kx + 2.5f, ky + 2.0f, kfs,
+				ColorUtil.multiplyAlpha(ktc, alpha), 0.05f);
 		}
 	}
+
 
 	// =========================================================================
 	//  Input
@@ -538,19 +479,16 @@ public final class ClickGuiScreen extends Screen {
 
 	@Override
 	public boolean mouseClicked(double mouseX, double mouseY, int button) {
-		float panelX = (this.width  - PANEL_W) * 0.5f;
-		float panelY = (this.height - PANEL_H) * 0.5f;
+		float px = (this.width - PANEL_W) * 0.5f;
+		float py = (this.height - PANEL_H) * 0.5f;
 
-		// Popup gets first dibs on input.
-		if (popup.mouseClicked(mouseX, mouseY, panelX, panelY, PANEL_W, PANEL_H, button)) {
-			return true;
-		}
+		if (popup.mouseClicked(mouseX, mouseY, px, py, PANEL_W, PANEL_H, button)) return true;
 
-		// Sidebar
+		// Sidebar categories
 		Category[] cats = Category.values();
 		for (int i = 0; i < cats.length; i++) {
-			float rowY = panelY + categoryRowY(i);
-			if (isInside(mouseX, mouseY, panelX + 10.0f, rowY, SIDEBAR_W - 20.0f, 24.0f)) {
+			float rowY = py + catRowY(i);
+			if (inside(mouseX, mouseY, px + 8.0f, rowY, SIDEBAR_W - 16.0f, 22.0f)) {
 				if (selectedCategory != cats[i]) {
 					selectedCategory = cats[i];
 					updateSelectorAnim(false);
@@ -561,121 +499,85 @@ public final class ClickGuiScreen extends Screen {
 		}
 
 		// Quit
-		float quitY = panelY + PANEL_H - 32.0f;
-		if (isInside(mouseX, mouseY, panelX + 10.0f, quitY, SIDEBAR_W - 20.0f, 22.0f)) {
-			this.close();
-			return true;
+		float quitY = py + PANEL_H - 30.0f;
+		if (inside(mouseX, mouseY, px + 8.0f, quitY, SIDEBAR_W - 16.0f, 20.0f)) {
+			close(); return true;
 		}
 
 		// Search bar
-		float searchX = panelX + SIDEBAR_W + 14.0f;
-		float searchY = panelY + 14.0f;
-		float searchW = PANEL_W - SIDEBAR_W - 28.0f;
-		boolean inSearch = isInside(mouseX, mouseY, searchX, searchY, searchW, 22.0f);
+		float searchX = px + SIDEBAR_W + 12.0f, searchY = py + 12.0f;
+		float searchW = PANEL_W - SIDEBAR_W - 24.0f;
+		boolean inSearch = inside(mouseX, mouseY, searchX, searchY, searchW, 20.0f);
 		searchActive = inSearch;
 		searchFocus.setTarget(inSearch ? 1.0f : 0.0f);
 
-		// Cards
-		float originX = panelX + SIDEBAR_W + CARD_AREA_PAD_X;
-		float originY = panelY + CARD_AREA_PAD_TOP - scroll.getValue();
-		float cardClipTop = panelY + CARD_AREA_PAD_TOP - 4.0f;
-		float cardClipBottom = panelY + PANEL_H - CARD_AREA_PAD_BOTTOM;
-		for (int i = 0; i < visibleModules.size(); i++) {
-			int row = i / CARDS_PER_ROW;
-			int col = i % CARDS_PER_ROW;
-			float cx = originX + col * (CARD_W + CARD_GAP_X);
-			float cy = originY + row * (CARD_H + CARD_GAP_Y);
-			if (!isInside(mouseX, mouseY, cx, cy, CARD_W, CARD_H)) continue;
-			if (mouseY < cardClipTop || mouseY > cardClipBottom) continue;
 
-			Module module = visibleModules.get(i);
-			if (button == 1) {
-				// Right click: toggle settings popup
-				popup.toggle(module);
-				return true;
-			}
-			if (button == 2) {
-				// Middle click: enter / cancel bind capture
-				bindingModule = (bindingModule == module) ? null : module;
-				return true;
-			}
-			// Left click: toggle module
-			module.toggle();
-			cardClickFlash.get(i).setImmediate(0.0f);
-			cardClickFlash.get(i).setTarget(1.0f);
+		// Cards
+		float ox = px + SIDEBAR_W + CARD_AREA_PAD_X;
+		float oy = py + CARD_AREA_PAD_TOP - scroll.getValue();
+		float clipTop = py + CARD_AREA_PAD_TOP - 4.0f;
+		float clipBot = py + PANEL_H - CARD_AREA_PAD_BOTTOM;
+		for (int i = 0; i < visibleModules.size(); i++) {
+			int row = i / CARDS_PER_ROW, col = i % CARDS_PER_ROW;
+			float cx = ox + col * (CARD_W + CARD_GAP_X);
+			float cy = oy + row * (CARD_H + CARD_GAP_Y);
+			if (!inside(mouseX, mouseY, cx, cy, CARD_W, CARD_H)) continue;
+			if (mouseY < clipTop || mouseY > clipBot) continue;
+
+			Module mod = visibleModules.get(i);
+			if (button == 1) { popup.toggle(mod); return true; }
+			if (button == 2) { bindingModule = (bindingModule == mod) ? null : mod; return true; }
+			mod.toggle();
+			cardFlash.get(i).setImmediate(0.0f);
+			cardFlash.get(i).setTarget(1.0f);
 			return true;
 		}
 
-		// Click outside everything: close any open popup
 		popup.close();
 		return super.mouseClicked(mouseX, mouseY, button);
 	}
 
 	@Override
-	public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
-		float panelX = (this.width  - PANEL_W) * 0.5f;
-		if (popup.mouseDragged(mouseX, mouseY, button, panelX, PANEL_W)) {
-			return true;
-		}
-		return super.mouseDragged(mouseX, mouseY, button, deltaX, deltaY);
+	public boolean mouseDragged(double mx, double my, int btn, double dx, double dy) {
+		float px = (this.width - PANEL_W) * 0.5f;
+		if (popup.mouseDragged(mx, my, btn, px, PANEL_W)) return true;
+		return super.mouseDragged(mx, my, btn, dx, dy);
 	}
 
 	@Override
-	public boolean mouseReleased(double mouseX, double mouseY, int button) {
-		popup.mouseReleased(button);
-		return super.mouseReleased(mouseX, mouseY, button);
+	public boolean mouseReleased(double mx, double my, int btn) {
+		popup.mouseReleased(btn);
+		return super.mouseReleased(mx, my, btn);
 	}
 
+
 	@Override
-	public boolean mouseScrolled(double mouseX, double mouseY,
-			double horizontalAmount, double verticalAmount) {
-		float panelX = (this.width  - PANEL_W) * 0.5f;
-		float panelY = (this.height - PANEL_H) * 0.5f;
-		if (popup.mouseScrolled(mouseX, mouseY, verticalAmount, panelX, panelY, PANEL_W, PANEL_H)) {
-			return true;
-		}
-		scrollTarget = Math.max(0.0f, Math.min(maxScroll, scrollTarget - (float) verticalAmount * 28.0f));
+	public boolean mouseScrolled(double mx, double my, double hAmt, double vAmt) {
+		float px = (this.width - PANEL_W) * 0.5f;
+		float py = (this.height - PANEL_H) * 0.5f;
+		if (popup.mouseScrolled(mx, my, vAmt, px, py, PANEL_W, PANEL_H)) return true;
+		scrollTarget = Math.max(0.0f, Math.min(maxScroll, scrollTarget - (float) vAmt * 24.0f));
 		scroll.setTarget(scrollTarget);
 		return true;
 	}
 
 	@Override
 	public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-		// Bind capture takes priority over everything else.
 		if (bindingModule != null) {
-			if (keyCode == 256 /* ESC */) {
-				bindingModule.keybind = -1;
-			} else {
-				bindingModule.keybind = keyCode;
-			}
+			if (keyCode == 256) bindingModule.keybind = -1;
+			else bindingModule.keybind = keyCode;
 			bindingModule = null;
 			return true;
 		}
-
 		if (searchActive) {
-			if (keyCode == 256 /* ESC */) {
-				searchActive = false;
-				searchFocus.setTarget(0.0f);
-				return true;
+			if (keyCode == 256) { searchActive = false; searchFocus.setTarget(0.0f); return true; }
+			if (keyCode == 259 && !searchText.isEmpty()) {
+				searchText = searchText.substring(0, searchText.length() - 1);
+				rebuildVisible(false); return true;
 			}
-			if (keyCode == 259 /* BACKSPACE */) {
-				if (!searchText.isEmpty()) {
-					searchText = searchText.substring(0, searchText.length() - 1);
-					rebuildVisible(false);
-				}
-				return true;
-			}
-			if (keyCode == 257 /* ENTER */) {
-				searchActive = false;
-				searchFocus.setTarget(0.0f);
-				return true;
-			}
+			if (keyCode == 257) { searchActive = false; searchFocus.setTarget(0.0f); return true; }
 		}
-
-		// Popup may close itself / its dropdown on ESC
-		if (popup.keyPressed(keyCode)) {
-			return true;
-		}
+		if (popup.keyPressed(keyCode)) return true;
 		return super.keyPressed(keyCode, scanCode, modifiers);
 	}
 
@@ -689,8 +591,7 @@ public final class ClickGuiScreen extends Screen {
 		return super.charTyped(chr, modifiers);
 	}
 
-	private static boolean isInside(double mouseX, double mouseY,
-			float x, float y, float w, float h) {
-		return mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h;
+	private static boolean inside(double mx, double my, float x, float y, float w, float h) {
+		return mx >= x && mx <= x + w && my >= y && my <= y + h;
 	}
 }
