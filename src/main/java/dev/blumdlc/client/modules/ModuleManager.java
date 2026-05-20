@@ -6,14 +6,26 @@ import java.util.stream.Collectors;
 
 import org.joml.Matrix4f;
 
+import dev.blumdlc.client.modules.impl.AntiAFK;
+import dev.blumdlc.client.modules.impl.ArrayListHud;
 import dev.blumdlc.client.modules.impl.AttackAura;
+import dev.blumdlc.client.modules.impl.AutoEat;
+import dev.blumdlc.client.modules.impl.AutoRespawn;
+import dev.blumdlc.client.modules.impl.AutoTotem;
+import dev.blumdlc.client.modules.impl.AutoWalk;
+import dev.blumdlc.client.modules.impl.CoordsHud;
+import dev.blumdlc.client.modules.impl.EntityESP;
+import dev.blumdlc.client.modules.impl.FullBright;
 import dev.blumdlc.client.modules.impl.HudSettings;
 import dev.blumdlc.client.modules.impl.KeybindsHud;
+import dev.blumdlc.client.modules.impl.NoFall;
 import dev.blumdlc.client.modules.impl.PotionsHud;
+import dev.blumdlc.client.modules.impl.Sprint;
 import dev.blumdlc.client.modules.impl.StaffHud;
 import dev.blumdlc.client.modules.impl.TargetESP;
 import dev.blumdlc.client.modules.impl.TargetHud;
 import dev.blumdlc.client.modules.impl.Themes;
+import dev.blumdlc.client.modules.impl.Tracers;
 import dev.blumdlc.client.modules.impl.Trails;
 import dev.blumdlc.client.modules.impl.Watermark;
 
@@ -76,13 +88,29 @@ public final class ModuleManager {
 		AttackAura aura = new AttackAura();
 		register(aura);
 
+		// Movement
+		register(new Sprint());
+		register(new AutoWalk());
+		register(new AntiAFK());
+		register(new NoFall());
+
+		// Player
+		register(new AutoTotem());
+		register(new AutoEat());
+		register(new AutoRespawn());
+
 		// Visual
 		register(new TargetESP(aura));
 		register(new TargetHud(aura));
+		register(new EntityESP());
+		register(new Tracers());
+		register(new FullBright());
 		register(new Watermark());
 		register(new KeybindsHud());
 		register(new PotionsHud());
 		register(new StaffHud());
+		register(new ArrayListHud());
+		register(new CoordsHud());
 		register(new Trails());
 
 		// Visual — HUD toggle panel (must be registered after all HudModules)
