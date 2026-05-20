@@ -1,5 +1,7 @@
 package dev.blumdlc.client.ui.components;
 
+import java.util.function.Supplier;
+
 import org.joml.Matrix4f;
 
 import dev.blumdlc.client.modules.Module;
@@ -59,6 +61,10 @@ public final class SettingsPopup {
 	private float scrollTarget = 0.0f;
 	private float maxScroll = 0.0f;
 
+	// --- Cached settings height (invalidated on module change) ---
+	private float cachedSettingsHeight = -1.0f;
+	private Module cachedHeightModule = null;
+
 	// =========================================================================
 	//  Lifecycle
 	// =========================================================================
@@ -97,6 +103,8 @@ public final class SettingsPopup {
 		this.openDropdown = null;
 		this.draggingSlider = null;
 		this.draggingColor = null;
+		this.cachedSettingsHeight = -1.0f;
+		this.cachedHeightModule = null;
 	}
 
 	/** Animates the popup out without forgetting which module it was showing. */
@@ -105,6 +113,7 @@ public final class SettingsPopup {
 		this.openDropdown = null;
 		this.draggingSlider = null;
 		this.draggingColor = null;
+		this.cachedSettingsHeight = -1.0f;
 	}
 
 	/** Forgets the current module immediately and zeros all animations. */
@@ -127,7 +136,13 @@ public final class SettingsPopup {
 			float panelOpen, int mouseX, int mouseY) {
 		if (module == null) return;
 		float t = openAnim.getValue();
-		if (t < 0.001f) return;
+		if (t < 0.001f) {
+			// Animation finished closing — release the module reference
+			if (openAnim.getTarget() == 0.0f) {
+				module = null;
+			}
+			return;
+		}
 
 		float baseX = panelX + panelW + GAP;
 		float startX = baseX - 16.0f;            // slide-in from the left
@@ -169,7 +184,7 @@ public final class SettingsPopup {
 		float contentX = x + PAD_X;
 		float contentW = w - PAD_X * 2;
 
-		float totalH = computeSettingsHeight(module);
+		float totalH = getSettingsHeight(module);
 		float visibleH = contentBottom - contentTop;
 		maxScroll = Math.max(0.0f, totalH - visibleH);
 		scrollTarget = Math.max(0.0f, Math.min(scrollTarget, maxScroll));
@@ -178,6 +193,7 @@ public final class SettingsPopup {
 		float scrollOff = scroll.getValue();
 		float cy = contentTop - scrollOff;
 		for (Setting<?> s : module.settings) {
+			if (!isSettingVisible(s)) continue;
 			cy = drawSetting(matrix, font, s, contentX, cy, contentW, a, mouseX, mouseY,
 				contentTop, contentBottom);
 			cy += ROW_GAP;
@@ -245,6 +261,7 @@ public final class SettingsPopup {
 			if (ns.step > 0.0) {
 				v = Math.round(v / ns.step) * ns.step;
 			}
+			v = Math.max(ns.min, Math.min(ns.max, v));
 			ns.set(v);
 			return true;
 		}
@@ -431,6 +448,7 @@ public final class SettingsPopup {
 		UIRender.text(matrix, font, open ? "^" : "v", x + w - 12.0f, y + 4.5f, 7.5f,
 			ColorUtil.multiplyAlpha(Theme.TEXT_MUTED, a));
 
+		// Store the dropdown's rendered position (already includes scroll offset)
 		if (open) {
 			dropdownX = x;
 			dropdownY = y;
@@ -557,6 +575,7 @@ public final class SettingsPopup {
 				int idx = (int) ((mouseY - listY) / rowH);
 				if (idx >= 0 && idx < openDropdown.modes.size()) {
 					openDropdown.set(openDropdown.modes.get(idx));
+					cachedSettingsHeight = -1.0f;
 				}
 				openDropdown = null;
 				return true;
@@ -569,6 +588,7 @@ public final class SettingsPopup {
 		}
 
 		for (Setting<?> s : module.settings) {
+			if (!isSettingVisible(s)) continue;
 			float labelY = cy;
 			float controlY = cy + 12.0f;
 
@@ -579,6 +599,7 @@ public final class SettingsPopup {
 				float ty = labelY - 1.0f;
 				if (inside(mouseX, mouseY, tx, ty, trackW, trackH) && button == 0) {
 					bs.toggle();
+					cachedSettingsHeight = -1.0f; // visibility may have changed
 					return true;
 				}
 				cy = labelY + 14.0f + ROW_GAP;
@@ -603,6 +624,7 @@ public final class SettingsPopup {
 					if (ns.step > 0.0) {
 						v = Math.round(v / ns.step) * ns.step;
 					}
+					v = Math.max(ns.min, Math.min(ns.max, v));
 					ns.set(v);
 					draggingSlider = ns;
 					return true;
@@ -617,6 +639,7 @@ public final class SettingsPopup {
 					for (String mode : ms.modes) {
 						if (inside(mouseX, mouseY, contentX, ry, contentW, rowH) && button == 0) {
 							ms.set(mode);
+							cachedSettingsHeight = -1.0f;
 							return true;
 						}
 						ry += rowH + rowGap;
@@ -638,6 +661,7 @@ public final class SettingsPopup {
 				for (String opt : mu.options) {
 					if (inside(mouseX, mouseY, contentX, ry, contentW, rowH) && button == 0) {
 						mu.toggle(opt);
+						cachedSettingsHeight = -1.0f;
 						return true;
 					}
 					ry += rowH + rowGap;
@@ -659,6 +683,7 @@ public final class SettingsPopup {
 	private static float computeSettingsHeight(Module module) {
 		float h = 0.0f;
 		for (Setting<?> s : module.settings) {
+			if (!isSettingVisible(s)) continue;
 			if (s instanceof BooleanSetting) {
 				h += 14.0f;
 			} else if (s instanceof ColorSetting) {
@@ -675,6 +700,32 @@ public final class SettingsPopup {
 			h += ROW_GAP;
 		}
 		return h;
+	}
+
+	/**
+	 * Returns cached settings height, recomputing only when the module changes.
+	 * For FoldCraft Launcher optimization: avoids recalculating every frame.
+	 */
+	private float getSettingsHeight(Module m) {
+		if (m != cachedHeightModule || cachedSettingsHeight < 0.0f) {
+			cachedSettingsHeight = computeSettingsHeight(m);
+			cachedHeightModule = m;
+		}
+		return cachedSettingsHeight;
+	}
+
+	/** Invalidates the cached settings height (call when a setting visibility changes). */
+	public void invalidateHeightCache() {
+		this.cachedSettingsHeight = -1.0f;
+	}
+
+	/**
+	 * Checks whether a setting should be visible based on its visibility
+	 * predicate. Settings with no predicate are always visible.
+	 */
+	private static boolean isSettingVisible(Setting<?> s) {
+		Supplier<Boolean> vis = s.getVisibility();
+		return vis == null || vis.get();
 	}
 
 	/** Hue 0..1 -> fully-saturated ARGB. */
