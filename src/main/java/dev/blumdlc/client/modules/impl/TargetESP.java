@@ -77,24 +77,17 @@ public final class TargetESP extends Module {
 			return;
 		}
 
-		// 1. Anchor and quad size depend on the chosen skin.
-		//    Cube:  centered on the body, full size.
-		//    Point: anchored above the head, ~70% size so it reads as a marker
-		//           rather than a halo around the whole body.
-		boolean point = style.is("Point");
+		// 1. Project the target's body center to scaled-screen coords.
+		//    Both skins use the same anchor (body center) and full size.
 		Vec3d pos = target.getLerpedPos(tickDelta);
-		double anchorY = point
-			? pos.y + target.getHeight() + 0.35
-			: pos.y + target.getHeight() * 0.5;
+		double anchorY = pos.y + target.getHeight() * 0.5;
 		Projection.Result projected = Projection.project(pos.x, anchorY, pos.z);
 		if (!projected.onScreen()) {
 			return;
 		}
 
-		// 2. Resolve the texture id (auto-registers as a ResourceTexture
-		//    on first call). If the asset is missing the manager hands back
-		//    Minecraft's default missing-texture, which is harmless.
-		Identifier id = point ? TEXTURE_POINT : TEXTURE_CUBE;
+		// 2. Resolve the texture id based on selected style.
+		Identifier id = style.is("Point") ? TEXTURE_POINT : TEXTURE_CUBE;
 		AbstractTexture tex = MinecraftClient.getInstance().getTextureManager().getTexture(id);
 		if (tex == null) {
 			return;
@@ -103,7 +96,7 @@ public final class TargetESP extends Module {
 		// 3. Compose a rotated matrix around the projected anchor point.
 		float px = projected.x();
 		float py = projected.y();
-		float boxSize = size.getFloat() * (point ? 0.7f : 1.0f);
+		float boxSize = size.getFloat();
 		float angle = currentAngle();
 
 		Matrix4f rotated = new Matrix4f(matrix)
