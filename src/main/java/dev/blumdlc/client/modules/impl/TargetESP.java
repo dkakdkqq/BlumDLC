@@ -18,32 +18,32 @@ import net.minecraft.util.Identifier;
 import net.minecraft.util.math.Vec3d;
 
 /**
- * TargetESP — draws a rotating target reticle on the entity that
+ * TargetESP — draws a rotating reticle on the entity that
  * {@link AttackAura} is currently focused on.
  *
- * <p>The image is sourced from {@code assets/blum/textures/target.png} and
- * rendered exclusively through this project's existing {@link Builder} API
- * ({@code Builder.texture()} -> {@code BuiltTexture}). No vanilla draw helpers
- * are used.
- *
- * <p>Behaviour:
+ * <p>Two skins selectable via {@link #style}:
  * <ul>
- *   <li>Only renders while {@link AttackAura} is enabled and currently has a
- *       target (i.e. the player is locked onto someone).</li>
- *   <li>Anchors at the target's body center (interpolated for smooth motion
- *       between ticks).</li>
- *   <li>Rotates around the anchor point at a user-configurable speed.</li>
- *   <li>Tints the four corners of the quad with a slowly-shifting hue gradient
- *       so the reticle reads as a single rotating "energy ring" rather than a
- *       static decal.</li>
+ *   <li>{@code Cube}  — the original chunky target ({@code textures/target.png}),
+ *       anchored at the body center;</li>
+ *   <li>{@code Point} — a slimmer marker ({@code textures/target2.png}),
+ *       drawn smaller and placed above the head so it never blocks combat
+ *       readouts.</li>
  * </ul>
+ *
+ * <p>Both skins use the same render pipeline through this project's
+ * {@link Builder} API ({@code Builder.texture()} -> {@code BuiltTexture}); no
+ * vanilla draw helpers are used.
  */
 public final class TargetESP extends Module {
 
-	private static final Identifier TEXTURE = Identifier.of("blumdlc", "textures/target.png");
+	/** Original "Cube" skin: thick textured target ring. */
+	private static final Identifier TEXTURE_CUBE  = Identifier.of("blumdlc", "textures/target.png");
+	/** "Point" skin: alternate marker added by the user. */
+	private static final Identifier TEXTURE_POINT = Identifier.of("blumdlc", "textures/target2.png");
 
 	private final AttackAura attackAura;
 
+	public final ModeSetting   style;
 	public final NumberSetting size;
 	public final NumberSetting speed;
 	public final NumberSetting brightness;
@@ -53,12 +53,14 @@ public final class TargetESP extends Module {
 		super("TargetESP", "Marks the entity AttackAura is locked onto", Category.RENDER);
 		this.attackAura = attackAura;
 
+		this.style      = new ModeSetting("Style", "Cube", "Cube", "Point");
 		this.size       = new NumberSetting("Size",        45.0,  10.0, 140.0, 1.0);
 		this.speed      = new NumberSetting("Speed",        3.0,   0.5,   9.0, 0.1);
 		this.brightness = new NumberSetting("Brightness", 220.0,  20.0, 255.0, 1.0);
 		this.color      = new ModeSetting("Color", "Magenta",
 			"Magenta", "Cyan", "Crimson", "Lime", "Gold", "Rainbow");
 
+		addSetting(this.style);
 		addSetting(this.size);
 		addSetting(this.speed);
 		addSetting(this.brightness);
@@ -75,9 +77,15 @@ public final class TargetESP extends Module {
 			return;
 		}
 
-		// 1. Project the target's body center to scaled-screen coords.
+		// 1. Anchor and quad size depend on the chosen skin.
+		//    Cube:  centered on the body, full size.
+		//    Point: anchored above the head, ~70% size so it reads as a marker
+		//           rather than a halo around the whole body.
+		boolean point = style.is("Point");
 		Vec3d pos = target.getLerpedPos(tickDelta);
-		double anchorY = pos.y + target.getHeight() * 0.5;
+		double anchorY = point
+			? pos.y + target.getHeight() + 0.35
+			: pos.y + target.getHeight() * 0.5;
 		Projection.Result projected = Projection.project(pos.x, anchorY, pos.z);
 		if (!projected.onScreen()) {
 			return;
@@ -86,7 +94,8 @@ public final class TargetESP extends Module {
 		// 2. Resolve the texture id (auto-registers as a ResourceTexture
 		//    on first call). If the asset is missing the manager hands back
 		//    Minecraft's default missing-texture, which is harmless.
-		AbstractTexture tex = MinecraftClient.getInstance().getTextureManager().getTexture(TEXTURE);
+		Identifier id = point ? TEXTURE_POINT : TEXTURE_CUBE;
+		AbstractTexture tex = MinecraftClient.getInstance().getTextureManager().getTexture(id);
 		if (tex == null) {
 			return;
 		}
@@ -94,7 +103,7 @@ public final class TargetESP extends Module {
 		// 3. Compose a rotated matrix around the projected anchor point.
 		float px = projected.x();
 		float py = projected.y();
-		float boxSize = size.getFloat();
+		float boxSize = size.getFloat() * (point ? 0.7f : 1.0f);
 		float angle = currentAngle();
 
 		Matrix4f rotated = new Matrix4f(matrix)
