@@ -198,10 +198,16 @@ public final class SettingsPopup {
 		this.lastW = w;
 		this.lastH = h;
 
-		// Body
-		UIRender.rect(matrix, x, y, w, h, 14.0f, ColorUtil.multiplyAlpha(Theme.PANEL_BG, a));
+		// Body — soft drop shadow + vertical gradient + inner hairline.
+		UIRender.rect(matrix, x - 5.0f, y - 3.0f, w + 10.0f, h + 10.0f,
+			18.0f, ColorUtil.multiplyAlpha(0x55000000, a * 0.85f));
+		UIRender.rectGradientV(matrix, x, y, w, h, 14.0f,
+			ColorUtil.multiplyAlpha(Theme.PANEL_BG_TOP, a),
+			ColorUtil.multiplyAlpha(Theme.PANEL_BG_BOT, a));
 		UIRender.border(matrix, x, y, w, h, 14.0f, 1.0f,
 			ColorUtil.multiplyAlpha(Theme.PANEL_BORDER, a));
+		UIRender.border(matrix, x + 1.5f, y + 1.5f, w - 3.0f, h - 3.0f, 12.5f, 1.0f,
+			ColorUtil.multiplyAlpha(Theme.PANEL_INNER, a));
 
 		// Header — title and description, both ellipsized so very long names
 		// can't bleed past the close button or the body edge.
@@ -510,9 +516,10 @@ public final class SettingsPopup {
 		boolean hovered = inside(mouseX, mouseY, x, y, w, h);
 		boolean open = (openDropdown == s);
 
-		UIRender.rect(matrix, x, y, w, h, 6.0f,
-			ColorUtil.multiplyAlpha(open ? Theme.CARD_HOVER : (hovered ? Theme.CARD_HOVER : Theme.CARD_BG), a));
-		UIRender.border(matrix, x, y, w, h, 6.0f, 1.0f,
+		UIRender.rectGradientV(matrix, x, y, w, h, 7.0f,
+			ColorUtil.multiplyAlpha(open || hovered ? Theme.CARD_HOVER : Theme.CARD_BG_TOP, a),
+			ColorUtil.multiplyAlpha(open || hovered ? Theme.CARD_HOVER : Theme.CARD_BG_BOT, a));
+		UIRender.border(matrix, x, y, w, h, 7.0f, 1.0f,
 			ColorUtil.multiplyAlpha(open ? Theme.ACCENT : Theme.CARD_BORDER, a));
 
 		// Reserve room on the right for the caret indicator (~8 px) so the
@@ -544,13 +551,15 @@ public final class SettingsPopup {
 			boolean hovered = inside(mouseX, mouseY, x, cy, w, rowH);
 
 			if (isSelected) {
-				UIRender.rectGradientH(matrix, x, cy, w, rowH, 5.0f,
-					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, a),
-					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO,   a));
+				float p = 0.85f + 0.15f * (float) Math.sin(now() * 2.4);
+				UIRender.rectGradientH(matrix, x, cy, w, rowH, 6.0f,
+					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, p * a),
+					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO,   p * a));
 			} else {
-				UIRender.rect(matrix, x, cy, w, rowH, 5.0f,
-					ColorUtil.multiplyAlpha(hovered ? Theme.CARD_HOVER : Theme.CARD_BG, a));
-				UIRender.border(matrix, x, cy, w, rowH, 5.0f, 1.0f,
+				UIRender.rectGradientV(matrix, x, cy, w, rowH, 6.0f,
+					ColorUtil.multiplyAlpha(hovered ? Theme.CARD_HOVER : Theme.CARD_BG_TOP, a),
+					ColorUtil.multiplyAlpha(hovered ? Theme.CARD_HOVER : Theme.CARD_BG_BOT, a));
+				UIRender.border(matrix, x, cy, w, rowH, 6.0f, 1.0f,
 					ColorUtil.multiplyAlpha(Theme.CARD_BORDER, 0.5f * a));
 			}
 
@@ -574,13 +583,15 @@ public final class SettingsPopup {
 			boolean hovered = inside(mouseX, mouseY, x, cy, w, rowH);
 
 			if (selected) {
-				UIRender.rectGradientH(matrix, x, cy, w, rowH, 5.0f,
-					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, a),
-					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO,   a));
+				float p = 0.85f + 0.15f * (float) Math.sin(now() * 2.4);
+				UIRender.rectGradientH(matrix, x, cy, w, rowH, 6.0f,
+					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, p * a),
+					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO,   p * a));
 			} else {
-				UIRender.rect(matrix, x, cy, w, rowH, 5.0f,
-					ColorUtil.multiplyAlpha(hovered ? Theme.CARD_HOVER : Theme.CARD_BG, a));
-				UIRender.border(matrix, x, cy, w, rowH, 5.0f, 1.0f,
+				UIRender.rectGradientV(matrix, x, cy, w, rowH, 6.0f,
+					ColorUtil.multiplyAlpha(hovered ? Theme.CARD_HOVER : Theme.CARD_BG_TOP, a),
+					ColorUtil.multiplyAlpha(hovered ? Theme.CARD_HOVER : Theme.CARD_BG_BOT, a));
+				UIRender.border(matrix, x, cy, w, rowH, 6.0f, 1.0f,
 					ColorUtil.multiplyAlpha(Theme.CARD_BORDER, 0.5f * a));
 			}
 
@@ -645,9 +656,9 @@ public final class SettingsPopup {
 			(int) Math.ceil(lastX + lastW - 1.0f),
 			(int) Math.ceil(bodyBottom));
 
-		UIRender.rect(matrix, x, y, w, drawnH, 6.0f,
+		UIRender.rect(matrix, x, y, w, drawnH, 8.0f,
 			ColorUtil.multiplyAlpha(Theme.PANEL_BG, a));
-		UIRender.border(matrix, x, y, w, drawnH, 6.0f, 1.0f,
+		UIRender.border(matrix, x, y, w, drawnH, 8.0f, 1.0f,
 			ColorUtil.multiplyAlpha(Theme.ACCENT, a));
 
 		float cy = y;
@@ -658,11 +669,11 @@ public final class SettingsPopup {
 			boolean hovered = inside(mouseX, mouseY, x, cy, w, rowH);
 
 			if (isSelected) {
-				UIRender.rectGradientH(matrix, x + 1, cy, w - 2, rowH, 5.0f,
+				UIRender.rectGradientH(matrix, x + 1, cy, w - 2, rowH, 6.0f,
 					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, a),
 					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO,   a));
 			} else if (hovered) {
-				UIRender.rect(matrix, x + 1, cy, w - 2, rowH, 5.0f,
+				UIRender.rect(matrix, x + 1, cy, w - 2, rowH, 6.0f,
 					ColorUtil.multiplyAlpha(Theme.CARD_HOVER, a));
 			}
 
@@ -903,5 +914,10 @@ public final class SettingsPopup {
 
 	private static float clamp01(float v) {
 		return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+	}
+
+	/** Seconds-resolution timer used to drive ambient pulse animations. */
+	private static float now() {
+		return (System.currentTimeMillis() % 1_000_000L) / 1000.0f;
 	}
 }

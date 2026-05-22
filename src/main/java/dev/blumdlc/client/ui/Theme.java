@@ -17,25 +17,36 @@ public final class Theme {
 	// =========================================================================
 
 	/** Dim layer drawn behind the panel. */
-	public static final int DIM            = 0xB0000000;
+	public static final int DIM            = 0xC0030610;
 
 	// =========================================================================
-	//  Panel chrome — translucent black "glass" plates
+	//  Panel chrome — slate / midnight glass with a subtle vertical gradient
 	// =========================================================================
 
-	/** Main panel plate — corresponds to FeverVisual {@code (0,0,0,130)}. */
-	public static final int PANEL_BG       = 0x82000000;
-	public static final int PANEL_BORDER   = 0x33FFFFFF;
-	public static final int SIDEBAR_BG     = 0x82000000;
+	/** Top of the panel gradient. */
+	public static final int PANEL_BG_TOP   = 0xCC141828;
+	/** Bottom of the panel gradient. */
+	public static final int PANEL_BG_BOT   = 0xE6080B14;
+
+	/** Solid fallback (popup body, dropdown overlays). Kept for compatibility. */
+	public static final int PANEL_BG       = 0xCC0B0F1A;
+	public static final int PANEL_BORDER   = 0x40FFFFFF;
+	/** Hairline highlight drawn just inside the outer border for depth. */
+	public static final int PANEL_INNER    = 0x14FFFFFF;
+	public static final int SIDEBAR_BG     = 0xCC0B0F1A;
 	public static final int DIVIDER        = 0x33FFFFFF;
 
 	// =========================================================================
 	//  Cards (sidebar items, module rows, popup setting controls)
 	// =========================================================================
 
-	/** Inactive card — slightly darker than the panel so it reads as inset. */
-	public static final int CARD_BG        = 0x60000000;
-	public static final int CARD_HOVER     = 0x80000000;
+	/** Inactive card — gradient endpoints. */
+	public static final int CARD_BG_TOP    = 0x90161B2A;
+	public static final int CARD_BG_BOT    = 0x9A0E1220;
+
+	/** Solid fallback. */
+	public static final int CARD_BG        = 0x90121726;
+	public static final int CARD_HOVER     = 0xA01F2638;
 	public static final int CARD_BORDER    = 0x22FFFFFF;
 
 	/** Active-card gradient start. Refreshed each frame from {@link ClientTheme}. */

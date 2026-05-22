@@ -54,8 +54,8 @@ public final class ClickGuiScreen extends Screen {
 
 	private static final float PANEL_W     = 500.0f;
 	private static final float PANEL_H     = 340.0f;
-	private static final float CORNER      = 3.0f;          // almost-square
-	private static final float CARD_CORNER = 2.0f;
+	private static final float CORNER      = 8.0f;          // softer rounding
+	private static final float CARD_CORNER = 5.0f;
 
 	private static final float HEADER_H    = 50.0f;
 	private static final float SIDEBAR_W   = 110.0f;
@@ -78,14 +78,10 @@ public final class ClickGuiScreen extends Screen {
 	//  through Theme.ACCENT / CARD_ACTIVE_*.
 	// =========================================================================
 
-	/** Main panel plate — RGBA(0,0,0,130). */
-	private static final int CLR_PANEL     = 0x82000000;
 	/** Logo plate background — same translucent black as the panel. */
-	private static final int CLR_LOGO      = 0x82000000;
+	private static final int CLR_LOGO      = 0xCC080B14;
 	/** Brownish red used for the version label. */
 	private static final int CLR_VERSION   = 0xFFA65252;
-	/** Inactive category / module-row plate. */
-	private static final int CLR_CARD_OFF  = 0x82000000;
 	/** Selected category tint — translucent blue. */
 	private static final int CLR_CAT_ON    = 0xC8005DFF;
 	/** Module-row tint when its module is enabled. */
@@ -94,8 +90,6 @@ public final class ClickGuiScreen extends Screen {
 	private static final int CLR_TOGGLE_ON = 0xCC005DFF;
 	/** White vertical divider down the centre of the toggle pill. */
 	private static final int CLR_DIVIDER   = 0xD0FFFFFF;
-	/** Backdrop dim. */
-	private static final int CLR_DIM       = 0xB0000000;
 
 	// =========================================================================
 	//  Branding
@@ -272,7 +266,7 @@ public final class ClickGuiScreen extends Screen {
 
 		// Backdrop dim
 		UIRender.rect(m, 0.0f, 0.0f, this.width, this.height, 0.0f,
-			ColorUtil.multiplyAlpha(CLR_DIM, open));
+			ColorUtil.multiplyAlpha(Theme.DIM, open));
 
 		// Panel position — centred, but clamped so the panel itself is never
 		// rendered fully off-screen at extreme GUI scales.
@@ -292,19 +286,29 @@ public final class ClickGuiScreen extends Screen {
 
 	private void drawPanel(DrawContext ctx, Matrix4f m, MsdfFont font,
 			float px, float py, float open, int mouseX, int mouseY) {
-		// Subtle blur underneath so the world is dimmed but readable.
-		UIRender.blur(m, px, py, PANEL_W, PANEL_H, CORNER, 6.0f, 0xFF000000);
+		// Soft drop shadow — a slightly larger, very dim rect behind the
+		// panel that gives it visual lift over the world.
+		UIRender.rect(m, px - 6.0f, py - 4.0f, PANEL_W + 12.0f, PANEL_H + 12.0f,
+			CORNER + 6.0f, ColorUtil.multiplyAlpha(0x55000000, open * 0.85f));
 
-		// Main plate
-		UIRender.rect(m, px, py, PANEL_W, PANEL_H, CORNER,
-			ColorUtil.multiplyAlpha(CLR_PANEL, open));
+		// Subtle blur underneath so the world is dimmed but readable.
+		UIRender.blur(m, px, py, PANEL_W, PANEL_H, CORNER, 5.0f, 0xFF000000);
+
+		// Main plate — vertical slate gradient instead of a flat fill.
+		UIRender.rectGradientV(m, px, py, PANEL_W, PANEL_H, CORNER,
+			ColorUtil.multiplyAlpha(Theme.PANEL_BG_TOP, open),
+			ColorUtil.multiplyAlpha(Theme.PANEL_BG_BOT, open));
+		// Outer crisp border + inner hairline for "glass depth".
 		UIRender.border(m, px, py, PANEL_W, PANEL_H, CORNER, 1.0f,
 			ColorUtil.multiplyAlpha(Theme.PANEL_BORDER, open));
+		UIRender.border(m, px + 1.5f, py + 1.5f, PANEL_W - 3.0f, PANEL_H - 3.0f,
+			Math.max(0.0f, CORNER - 1.5f), 1.0f,
+			ColorUtil.multiplyAlpha(Theme.PANEL_INNER, open));
 
 		drawHeader(ctx, m, font, px, py, open, mouseX, mouseY);
 
 		// Header / body divider
-		UIRender.rect(m, px + 10.0f, py + HEADER_H, PANEL_W - 20.0f, 1.0f, 0.0f,
+		UIRender.rect(m, px + 12.0f, py + HEADER_H, PANEL_W - 24.0f, 1.0f, 0.0f,
 			ColorUtil.multiplyAlpha(Theme.DIVIDER, open));
 
 		drawSidebar(m, font, px, py + HEADER_H, open, mouseX, mouseY);
@@ -357,6 +361,14 @@ public final class ClickGuiScreen extends Screen {
 
 		float focus = searchFocus.getValue();
 		int border  = ColorUtil.lerp(Theme.PANEL_BORDER, Theme.ACCENT, focus);
+
+		// Soft outer halo when focused — drawn before the box so the box
+		// can sit cleanly on top of it.
+		if (focus > 0.001f) {
+			UIRender.border(m, sx - 1.5f, sy - 1.5f, sw + 3.0f, sh + 3.0f,
+				CARD_CORNER + 2.0f, 1.0f,
+				ColorUtil.multiplyAlpha(Theme.ACCENT, focus * 0.35f * open));
+		}
 
 		UIRender.rect(m, sx, sy, sw, sh, CARD_CORNER,
 			ColorUtil.multiplyAlpha(Theme.SEARCH_BG, open));
@@ -420,9 +432,10 @@ public final class ClickGuiScreen extends Screen {
 			float hovT = catHover[i].getValue();
 			float selT = catSelect[i].getValue();
 
-			// Off plate
-			UIRender.rect(m, cx, cy, cw, CAT_H, CARD_CORNER,
-				ColorUtil.multiplyAlpha(CLR_CARD_OFF, open));
+			// Off plate — gradient for richer feel
+			UIRender.rectGradientV(m, cx, cy, cw, CAT_H, CARD_CORNER,
+				ColorUtil.multiplyAlpha(Theme.CARD_BG_TOP, open),
+				ColorUtil.multiplyAlpha(Theme.CARD_BG_BOT, open));
 
 			// Hover lift (only when not selected)
 			if (hovT > 0.001f && selT < 0.999f) {
@@ -430,12 +443,14 @@ public final class ClickGuiScreen extends Screen {
 					ColorUtil.multiplyAlpha(0x18FFFFFF, hovT * (1.0f - selT) * open));
 			}
 
-			// Selected blue tint + cyan accent strip on the left edge
+			// Selected blue tint + cyan accent strip on the left edge.
+			// The strip's alpha breathes gently so the active item feels alive.
 			if (selT > 0.001f) {
 				UIRender.rect(m, cx, cy, cw, CAT_H, CARD_CORNER,
 					ColorUtil.multiplyAlpha(CLR_CAT_ON, selT * open));
-				UIRender.rect(m, cx, cy + 4.0f, 2.0f, CAT_H - 8.0f, 1.0f,
-					ColorUtil.multiplyAlpha(Theme.ACCENT, selT * open));
+				float stripPulse = 0.85f + 0.15f * (float) Math.sin(now() * 2.0);
+				UIRender.rect(m, cx + 1.0f, cy + 5.0f, 2.5f, CAT_H - 10.0f, 1.5f,
+					ColorUtil.multiplyAlpha(Theme.ACCENT, selT * stripPulse * open));
 			}
 
 			UIRender.border(m, cx, cy, cw, CAT_H, CARD_CORNER, 1.0f,
@@ -530,32 +545,37 @@ public final class ClickGuiScreen extends Screen {
 		float togT = tog.getValue();
 		float flT  = flash.getValue();
 
-		// Base card
-		UIRender.rect(m, rxOff, ry, rw, ROW_H, CARD_CORNER,
-			ColorUtil.multiplyAlpha(CLR_CARD_OFF, alpha));
+		// Base card — gradient
+		UIRender.rectGradientV(m, rxOff, ry, rw, ROW_H, CARD_CORNER,
+			ColorUtil.multiplyAlpha(Theme.CARD_BG_TOP, alpha),
+			ColorUtil.multiplyAlpha(Theme.CARD_BG_BOT, alpha));
 
-		// Hover lift
+		// Hover diagonal sheen
 		if (hovT > 0.001f) {
-			UIRender.rect(m, rxOff, ry, rw, ROW_H, CARD_CORNER,
-				ColorUtil.multiplyAlpha(0x14FFFFFF, hovT * alpha));
+			UIRender.rectGradientH(m, rxOff, ry, rw, ROW_H, CARD_CORNER,
+				ColorUtil.multiplyAlpha(0x10FFFFFF, hovT * 0.5f * alpha),
+				ColorUtil.multiplyAlpha(0x22FFFFFF, hovT * 0.9f * alpha));
 		}
 
-		// ON tint
+		// ON tint — pulses subtly so enabled rows feel alive
 		if (togT > 0.001f) {
-			UIRender.rect(m, rxOff, ry, rw, ROW_H, CARD_CORNER,
-				ColorUtil.multiplyAlpha(CLR_ROW_ON, togT * alpha));
+			float p = 0.85f + 0.15f * (float) Math.sin(now() * 2.4);
+			UIRender.rectGradientH(m, rxOff, ry, rw, ROW_H, CARD_CORNER,
+				ColorUtil.multiplyAlpha(CLR_ROW_ON, togT * p * alpha),
+				ColorUtil.multiplyAlpha(0x99005DFF, togT * p * 0.6f * alpha));
 		}
 
 		UIRender.border(m, rxOff, ry, rw, ROW_H, CARD_CORNER, 1.0f,
 			ColorUtil.multiplyAlpha(Theme.PANEL_BORDER, alpha));
 
-		// Click flash ring — kept inside the card so it doesn't extend past
-		// the panel edge when the row is near the list border.
+		// Click flash ring — ripple outward, scissor of the module list
+		// keeps it inside the panel.
 		if (flT > 0.001f && flT < 0.999f) {
-			UIRender.border(m, rxOff + 0.5f, ry + 0.5f,
-				rw - 1.0f, ROW_H - 1.0f,
-				CARD_CORNER, 1.2f,
-				ColorUtil.multiplyAlpha(Theme.ACCENT, (1.0f - flT) * 0.8f * alpha));
+			float ripple = flT * 2.0f;
+			UIRender.border(m, rxOff - ripple, ry - ripple,
+				rw + ripple * 2.0f, ROW_H + ripple * 2.0f,
+				CARD_CORNER + ripple, Math.max(0.4f, 1.4f - flT),
+				ColorUtil.multiplyAlpha(Theme.ACCENT, (1.0f - flT) * 0.85f * alpha));
 		}
 
 		// Highlight if this row owns the popup
@@ -625,20 +645,30 @@ public final class ClickGuiScreen extends Screen {
 	/**
 	 * The signature "see-saw" toggle: a rounded pill with a white vertical
 	 * divider down the middle, and a blue right-half fill that fades in as
-	 * the module becomes enabled.
+	 * the module becomes enabled. ON state pulses subtly + grows a soft
+	 * accent halo so it reads as "active" at a glance.
 	 */
 	private void drawTogglePill(Matrix4f m, float x, float y, float w, float h,
 			float t, float alpha) {
 		float r = h * 0.5f;
 
+		// Outer accent halo — only really visible when fully ON
+		if (t > 0.55f) {
+			float halo = (t - 0.55f) / 0.45f;
+			float p = 0.6f + 0.4f * (float) Math.sin(now() * 3.0);
+			UIRender.border(m, x - 1.0f, y - 1.0f, w + 2.0f, h + 2.0f, r + 1.0f, 1.0f,
+				ColorUtil.multiplyAlpha(Theme.ACCENT, halo * p * 0.45f * alpha));
+		}
+
 		// Dark base
 		UIRender.rect(m, x, y, w, h, r,
 			ColorUtil.multiplyAlpha(0xA0000000, alpha));
 
-		// ON-state fill — animates alpha so the corners stay nicely rounded.
+		// ON-state fill with gentle breathing
 		if (t > 0.001f) {
+			float p = 0.88f + 0.12f * (float) Math.sin(now() * 3.0);
 			UIRender.rect(m, x, y, w, h, r,
-				ColorUtil.multiplyAlpha(CLR_TOGGLE_ON, t * alpha));
+				ColorUtil.multiplyAlpha(CLR_TOGGLE_ON, t * p * alpha));
 		}
 
 		// Centre divider — always visible, slightly thicker for clarity.
@@ -848,5 +878,11 @@ public final class ClickGuiScreen extends Screen {
 
 	private static boolean inside(double mx, double my, float x, float y, float w, float h) {
 		return mx >= x && mx <= x + w && my >= y && my <= y + h;
+	}
+
+	/** Seconds since UNIX epoch (modulo enough to avoid float precision loss),
+	 *  used to drive ambient pulse / breathing animations. */
+	private static float now() {
+		return (System.currentTimeMillis() % 1_000_000L) / 1000.0f;
 	}
 }
