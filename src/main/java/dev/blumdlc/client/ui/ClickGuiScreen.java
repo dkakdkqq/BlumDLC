@@ -36,9 +36,9 @@ import net.minecraft.util.Identifier;
  *       see-saw toggle pill (a white vertical divider in the centre, right
  *       half lights up blue when ON), an optional bind chip and an optional
  *       three-dot affordance for opening the settings popup.</li>
- *   <li>Settings popup is anchored to the right of the panel (component
- *       reused from the previous design — it picks up the new palette
- *       through {@link Theme}).</li>
+ *   <li>Settings popup is anchored to the right of the panel, with an
+ *       automatic flip-to-left fallback if it would overflow the screen at
+ *       high GUI scales (handled by {@link SettingsPopup}).</li>
  * </ul>
  *
  * <p>Bind capture is initiated with middle-click on a card. The next key
@@ -274,13 +274,18 @@ public final class ClickGuiScreen extends Screen {
 		UIRender.rect(m, 0.0f, 0.0f, this.width, this.height, 0.0f,
 			ColorUtil.multiplyAlpha(CLR_DIM, open));
 
+		// Panel position — centred, but clamped so the panel itself is never
+		// rendered fully off-screen at extreme GUI scales.
 		float px = (this.width - PANEL_W) * 0.5f;
+		px = Math.max(2.0f, Math.min(px, this.width - PANEL_W - 2.0f));
 		float py = (this.height - PANEL_H) * 0.5f + slide;
+		py = Math.max(2.0f, Math.min(py, this.height - PANEL_H - 2.0f));
 
 		drawPanel(context, m, font, px, py, open, mouseX, mouseY);
 
-		// Settings popup is anchored to the right edge of the panel.
-		popup.render(m, font, px, py, PANEL_W, PANEL_H, open, mouseX, mouseY);
+		// Settings popup is anchored to the right edge of the panel, with an
+		// automatic flip-to-left fallback if it would overflow the screen.
+		popup.render(context, m, font, px, py, PANEL_W, PANEL_H, open, mouseX, mouseY);
 
 		super.render(context, mouseX, mouseY, delta);
 	}
@@ -296,7 +301,7 @@ public final class ClickGuiScreen extends Screen {
 		UIRender.border(m, px, py, PANEL_W, PANEL_H, CORNER, 1.0f,
 			ColorUtil.multiplyAlpha(Theme.PANEL_BORDER, open));
 
-		drawHeader(m, font, px, py, open, mouseX, mouseY);
+		drawHeader(ctx, m, font, px, py, open, mouseX, mouseY);
 
 		// Header / body divider
 		UIRender.rect(m, px + 10.0f, py + HEADER_H, PANEL_W - 20.0f, 1.0f, 0.0f,
@@ -316,7 +321,7 @@ public final class ClickGuiScreen extends Screen {
 	//  Header
 	// ---------------------------------------------------------------------
 
-	private void drawHeader(Matrix4f m, MsdfFont font,
+	private void drawHeader(DrawContext ctx, Matrix4f m, MsdfFont font,
 			float px, float py, float open, int mouseX, int mouseY) {
 		// Logo plate
 		float logoSz = 36.0f;
@@ -332,17 +337,22 @@ public final class ClickGuiScreen extends Screen {
 			logoX + 6.0f, logoY + 6.0f, logoSz - 12.0f, logoSz - 12.0f,
 			ColorUtil.multiplyAlpha(0xFFFFFFFF, open));
 
-		// Title + version
-		float tx = logoX + logoSz + 10.0f;
-		UIRender.text(m, font, TITLE, tx, py + 10.0f, 13.0f,
+		// Title + version — clipped to the strip between the logo and the
+		// search bar so they can't bleed into either neighbour.
+		float titleX  = logoX + logoSz + 10.0f;
+		float searchX = px + PANEL_W - SEARCH_W - 10.0f;
+		float titleW  = Math.max(0.0f, searchX - 6.0f - titleX);
+		String title = UIRender.ellipsize(font, TITLE, 13.0f, titleW);
+		String version = UIRender.ellipsize(font, VERSION, 6.5f, titleW);
+		UIRender.text(m, font, title, titleX, py + 10.0f, 13.0f,
 			ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, open), 0.07f);
-		UIRender.text(m, font, VERSION, tx, py + 28.0f, 6.5f,
+		UIRender.text(m, font, version, titleX, py + 28.0f, 6.5f,
 			ColorUtil.multiplyAlpha(CLR_VERSION, open), 0.05f);
 
 		// Search bar
 		float sw = SEARCH_W;
 		float sh = SEARCH_H;
-		float sx = px + PANEL_W - sw - 10.0f;
+		float sx = searchX;
 		float sy = py + (HEADER_H - sh) * 0.5f;
 
 		float focus = searchFocus.getValue();
@@ -353,9 +363,26 @@ public final class ClickGuiScreen extends Screen {
 		UIRender.border(m, sx, sy, sw, sh, CARD_CORNER, 1.0f,
 			ColorUtil.multiplyAlpha(border, open));
 
+		// Search text + caret are scissor-clipped to the input box, and when
+		// the typed text is wider than the box (and the field is focused),
+		// the text scrolls horizontally so the caret stays visible at the
+		// right edge.
 		String disp = searchText.isEmpty() ? "Search..." : searchText;
 		int dispC   = searchText.isEmpty() ? Theme.TEXT_MUTED : Theme.TEXT_PRIMARY;
-		UIRender.text(m, font, disp, sx + 8.0f, sy + (sh - 7.0f) * 0.5f - 0.5f, 7.0f,
+		float padL = 8.0f;
+		float padR = 8.0f;
+		float available = sw - padL - padR;
+		float dispW = UIRender.textWidth(font, disp, 7.0f);
+		float scroll = (searchActive && dispW > available) ? (dispW - available) : 0.0f;
+
+		ctx.enableScissor(
+			(int) Math.floor(sx + 1.0f),
+			(int) Math.floor(sy + 1.0f),
+			(int) Math.ceil(sx + sw - 1.0f),
+			(int) Math.ceil(sy + sh - 1.0f));
+
+		UIRender.text(m, font, disp,
+			sx + padL - scroll, sy + (sh - 7.0f) * 0.5f - 0.5f, 7.0f,
 			ColorUtil.multiplyAlpha(dispC, open));
 
 		// Caret
@@ -365,10 +392,13 @@ public final class ClickGuiScreen extends Screen {
 			caretVisible = !caretVisible;
 		}
 		if (searchActive && caretVisible) {
-			float cx = sx + 8.0f + UIRender.textWidth(font, searchText, 7.0f) + 1.0f;
-			UIRender.rect(m, cx, sy + 4.0f, 1.0f, sh - 8.0f, 0.0f,
+			float caretX = sx + padL
+				+ UIRender.textWidth(font, searchText, 7.0f) - scroll + 1.0f;
+			UIRender.rect(m, caretX, sy + 4.0f, 1.0f, sh - 8.0f, 0.0f,
 				ColorUtil.multiplyAlpha(Theme.ACCENT, open));
 		}
+
+		ctx.disableScissor();
 	}
 
 	// ---------------------------------------------------------------------
@@ -411,12 +441,15 @@ public final class ClickGuiScreen extends Screen {
 			UIRender.border(m, cx, cy, cw, CAT_H, CARD_CORNER, 1.0f,
 				ColorUtil.multiplyAlpha(Theme.PANEL_BORDER, open));
 
-			// Label
-			String name = CATEGORIES[i].displayName;
+			// Label — ellipsized so very long category names can never spill
+			// past the sidebar's right edge.
 			float fs = 8.5f;
+			float labelX = cx + 12.0f;
+			float labelMaxW = cx + cw - labelX - 4.0f;
+			String name = UIRender.ellipsize(font, CATEGORIES[i].displayName, fs, labelMaxW);
 			int tc = ColorUtil.lerp(Theme.TEXT_SECONDARY, 0xFFFFFFFF,
 				selT * 0.7f + hovT * 0.3f);
-			UIRender.text(m, font, name, cx + 12.0f,
+			UIRender.text(m, font, name, labelX,
 				cy + (CAT_H - fs) * 0.5f - 0.5f, fs,
 				ColorUtil.multiplyAlpha(tc, open), 0.06f);
 		}
@@ -516,11 +549,12 @@ public final class ClickGuiScreen extends Screen {
 		UIRender.border(m, rxOff, ry, rw, ROW_H, CARD_CORNER, 1.0f,
 			ColorUtil.multiplyAlpha(Theme.PANEL_BORDER, alpha));
 
-		// Click flash ring
+		// Click flash ring — kept inside the card so it doesn't extend past
+		// the panel edge when the row is near the list border.
 		if (flT > 0.001f && flT < 0.999f) {
-			UIRender.border(m, rxOff - flT, ry - flT,
-				rw + flT * 2.0f, ROW_H + flT * 2.0f,
-				CARD_CORNER + flT * 2.0f, 1.2f,
+			UIRender.border(m, rxOff + 0.5f, ry + 0.5f,
+				rw - 1.0f, ROW_H - 1.0f,
+				CARD_CORNER, 1.2f,
 				ColorUtil.multiplyAlpha(Theme.ACCENT, (1.0f - flT) * 0.8f * alpha));
 		}
 
@@ -544,7 +578,11 @@ public final class ClickGuiScreen extends Screen {
 		if (awaiting || KeyName.isBound(mod.keybind)) {
 			String label = awaiting ? "..." : KeyName.describe(mod.keybind);
 			float fs = 5.5f;
-			float lw = UIRender.textWidth(font, label, fs) + 6.0f;
+			// Cap chip width so a really long keybind label can't push the
+			// dots / module name into negative width.
+			float chipMaxW = Math.max(12.0f, rightX - rxOff - 60.0f);
+			String chipLabel = UIRender.ellipsize(font, label, fs, chipMaxW - 6.0f);
+			float lw = UIRender.textWidth(font, chipLabel, fs) + 6.0f;
 			float lh = fs + 4.0f;
 			float lx = rightX - lw;
 			float ly = ry + (ROW_H - lh) * 0.5f;
@@ -552,7 +590,7 @@ public final class ClickGuiScreen extends Screen {
 			int chipColor = awaiting ? 0xFF000000   : Theme.TEXT_SECONDARY;
 			UIRender.rect(m, lx, ly, lw, lh, CARD_CORNER,
 				ColorUtil.multiplyAlpha(chipBg, alpha));
-			UIRender.text(m, font, label, lx + 3.0f, ly + 2.0f, fs,
+			UIRender.text(m, font, chipLabel, lx + 3.0f, ly + 2.0f, fs,
 				ColorUtil.multiplyAlpha(chipColor, alpha), 0.05f);
 			rightX = lx - 4.0f;
 		}
@@ -578,7 +616,7 @@ public final class ClickGuiScreen extends Screen {
 			togT * 0.7f + hovT * 0.3f);
 		float nameSize = 8.0f;
 		float maxNameW = rightX - rxOff - 10.0f;
-		String name = ellipsize(font, mod.name, nameSize, maxNameW);
+		String name = UIRender.ellipsize(font, mod.name, nameSize, maxNameW);
 		UIRender.text(m, font, name, rxOff + 10.0f,
 			ry + (ROW_H - nameSize) * 0.5f - 0.5f, nameSize,
 			ColorUtil.multiplyAlpha(nameColor, alpha), 0.05f);
@@ -619,7 +657,9 @@ public final class ClickGuiScreen extends Screen {
 	@Override
 	public boolean mouseClicked(double mouseX, double mouseY, int button) {
 		float px = (this.width - PANEL_W) * 0.5f;
+		px = Math.max(2.0f, Math.min(px, this.width - PANEL_W - 2.0f));
 		float py = (this.height - PANEL_H) * 0.5f;
+		py = Math.max(2.0f, Math.min(py, this.height - PANEL_H - 2.0f));
 
 		// Settings popup eats first
 		if (popup.mouseClicked(mouseX, mouseY, px, py, PANEL_W, PANEL_H, button)) {
@@ -723,6 +763,7 @@ public final class ClickGuiScreen extends Screen {
 	@Override
 	public boolean mouseDragged(double mx, double my, int button, double dx, double dy) {
 		float px = (this.width - PANEL_W) * 0.5f;
+		px = Math.max(2.0f, Math.min(px, this.width - PANEL_W - 2.0f));
 		if (popup.mouseDragged(mx, my, button, px, PANEL_W)) {
 			return true;
 		}
@@ -738,7 +779,9 @@ public final class ClickGuiScreen extends Screen {
 	@Override
 	public boolean mouseScrolled(double mx, double my, double horiz, double vert) {
 		float px = (this.width - PANEL_W) * 0.5f;
+		px = Math.max(2.0f, Math.min(px, this.width - PANEL_W - 2.0f));
 		float py = (this.height - PANEL_H) * 0.5f;
+		py = Math.max(2.0f, Math.min(py, this.height - PANEL_H - 2.0f));
 
 		if (popup.mouseScrolled(mx, my, vert, px, py, PANEL_W, PANEL_H)) {
 			return true;
@@ -802,22 +845,6 @@ public final class ClickGuiScreen extends Screen {
 	// =========================================================================
 	//  Helpers
 	// =========================================================================
-
-	private static String ellipsize(MsdfFont font, String s, float size, float maxW) {
-		if (maxW <= 0.0f) return "";
-		if (UIRender.textWidth(font, s, size) <= maxW) return s;
-		String dots = "...";
-		float dw = UIRender.textWidth(font, dots, size);
-		StringBuilder sb = new StringBuilder();
-		for (int i = 0; i < s.length(); i++) {
-			sb.append(s.charAt(i));
-			if (UIRender.textWidth(font, sb.toString(), size) + dw > maxW) {
-				if (sb.length() > 0) sb.deleteCharAt(sb.length() - 1);
-				break;
-			}
-		}
-		return sb.append(dots).toString();
-	}
 
 	private static boolean inside(double mx, double my, float x, float y, float w, float h) {
 		return mx >= x && mx <= x + w && my >= y && my <= y + h;

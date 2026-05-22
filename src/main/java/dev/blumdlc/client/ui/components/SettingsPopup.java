@@ -17,6 +17,8 @@ import dev.blumdlc.client.ui.UIRender;
 import dev.blumdlc.client.ui.animation.Animation;
 import dev.blumdlc.client.ui.animation.Easing;
 import dev.blumdlc.client.ui.util.ColorUtil;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.DrawContext;
 
 /**
  * Right-side settings popup component.
@@ -27,8 +29,11 @@ import dev.blumdlc.client.ui.util.ColorUtil;
  * returns {@code true} to indicate the input was consumed by the popup.
  *
  * <p>Geometry: the popup hangs to the right of the main panel, separated by
- * {@link #GAP} pixels and using the same height as the panel. It supports
- * vertical scrolling when the settings list overflows.
+ * {@link #GAP} pixels and using the same height as the panel. If the right
+ * side overflows the screen (high GUI scale), the popup flips to the left
+ * of the panel. Settings content is scissor-clipped so it never bleeds past
+ * the popup body, and the dropdown overlay flips above the trigger when
+ * there is no room below it.
  */
 public final class SettingsPopup {
 
@@ -55,6 +60,10 @@ public final class SettingsPopup {
 	// --- Open ModeSetting dropdown overlay ---
 	private ModeSetting openDropdown;
 	private float dropdownX, dropdownY, dropdownW, dropdownH;
+	/** Final Y where the dropdown list was rendered (after flip / clamp). */
+	private float dropdownListY;
+	/** Final height of the dropdown list (clamped to popup body if needed). */
+	private float dropdownListH;
 
 	// --- Vertical scroll ---
 	private final Animation scroll = new Animation(0.0f, 220, Easing.EASE_OUT_CUBIC);
@@ -64,6 +73,10 @@ public final class SettingsPopup {
 	// --- Cached settings height (invalidated on module change) ---
 	private float cachedSettingsHeight = -1.0f;
 	private Module cachedHeightModule = null;
+
+	// --- Last rendered popup bounds (used to keep input + dropdown overlay in
+	//     sync with the rendered geometry, especially after flip-to-left). ---
+	private float lastX, lastY, lastW, lastH;
 
 	// =========================================================================
 	//  Lifecycle
@@ -128,10 +141,34 @@ public final class SettingsPopup {
 	}
 
 	// =========================================================================
+	//  Layout helpers
+	// =========================================================================
+
+	/**
+	 * Picks the popup's X position. Default: to the right of the panel.
+	 * If that overflows the screen, flip to the left of the panel.
+	 * If both overflow, pin to the right edge.
+	 */
+	private static float computeX(float panelX, float panelW) {
+		float screenW = MinecraftClient.getInstance().getWindow().getScaledWidth();
+		float right = panelX + panelW + GAP;
+		if (right + WIDTH <= screenW - 4.0f) {
+			return right;
+		}
+		float left = panelX - WIDTH - GAP;
+		if (left >= 4.0f) {
+			return left;
+		}
+		// Neither side fits cleanly — pin to whichever edge keeps it most visible.
+		float pinned = screenW - WIDTH - 4.0f;
+		return Math.max(4.0f, pinned);
+	}
+
+	// =========================================================================
 	//  Render
 	// =========================================================================
 
-	public void render(Matrix4f matrix, MsdfFont font,
+	public void render(DrawContext ctx, Matrix4f matrix, MsdfFont font,
 			float panelX, float panelY, float panelW, float panelH,
 			float panelOpen, int mouseX, int mouseY) {
 		if (module == null) return;
@@ -144,23 +181,36 @@ public final class SettingsPopup {
 			return;
 		}
 
-		float baseX = panelX + panelW + GAP;
-		float startX = baseX - 16.0f;            // slide-in from the left
+		float baseX = computeX(panelX, panelW);
+		// Slide-in direction follows the side the popup ended up on, so the
+		// popup always travels inward from the panel rather than off-screen.
+		boolean leftSide = baseX < panelX;
+		float startX = baseX + (leftSide ? +16.0f : -16.0f);
 		float x = startX + (baseX - startX) * t;
 		float y = panelY;
 		float w = WIDTH;
 		float h = panelH;
 		float a = panelOpen * t;
 
+		// Stash for input methods + dropdown overlay
+		this.lastX = x;
+		this.lastY = y;
+		this.lastW = w;
+		this.lastH = h;
+
 		// Body
 		UIRender.rect(matrix, x, y, w, h, 14.0f, ColorUtil.multiplyAlpha(Theme.PANEL_BG, a));
 		UIRender.border(matrix, x, y, w, h, 14.0f, 1.0f,
 			ColorUtil.multiplyAlpha(Theme.PANEL_BORDER, a));
 
-		// Header
-		UIRender.text(matrix, font, module.name, x + PAD_X, y + 12.0f,
+		// Header — title and description, both ellipsized so very long names
+		// can't bleed past the close button or the body edge.
+		float headerTextW = w - PAD_X * 2.0f - CLOSE_SIZE - 6.0f;
+		String title = UIRender.ellipsize(font, module.name, 11.0f, headerTextW);
+		String desc  = UIRender.ellipsize(font, module.description, 6.5f, w - PAD_X * 2.0f);
+		UIRender.text(matrix, font, title, x + PAD_X, y + 12.0f,
 			11.0f, ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, a), 0.06f);
-		UIRender.text(matrix, font, module.description, x + PAD_X, y + 26.0f,
+		UIRender.text(matrix, font, desc, x + PAD_X, y + 26.0f,
 			6.5f, ColorUtil.multiplyAlpha(Theme.TEXT_MUTED, a), 0.04f);
 
 		// Close X (top-right)
@@ -190,6 +240,14 @@ public final class SettingsPopup {
 		scrollTarget = Math.max(0.0f, Math.min(scrollTarget, maxScroll));
 		scroll.setTarget(scrollTarget);
 
+		// Scissor settings rows so they don't bleed into the header / past the
+		// body edge while scrolling.
+		ctx.enableScissor(
+			(int) Math.floor(x + 1.0f),
+			(int) Math.floor(contentTop),
+			(int) Math.ceil(x + w - 1.0f),
+			(int) Math.ceil(contentBottom));
+
 		float scrollOff = scroll.getValue();
 		float cy = contentTop - scrollOff;
 		for (Setting<?> s : module.settings) {
@@ -198,6 +256,8 @@ public final class SettingsPopup {
 				contentTop, contentBottom);
 			cy += ROW_GAP;
 		}
+
+		ctx.disableScissor();
 
 		// Scrollbar
 		if (maxScroll > 0.5f) {
@@ -212,8 +272,9 @@ public final class SettingsPopup {
 				ColorUtil.multiplyAlpha(Theme.SCROLLBAR_FG, a));
 		}
 
-		// Dropdown overlay last so it covers subsequent rows
-		drawDropdownOverlay(matrix, font, a, mouseX, mouseY);
+		// Dropdown overlay last, with its own scissor so it can't escape the
+		// popup body even if it has to flip.
+		drawDropdownOverlay(ctx, matrix, font, a, mouseX, mouseY);
 	}
 
 	// =========================================================================
@@ -230,7 +291,7 @@ public final class SettingsPopup {
 			float panelX, float panelY, float panelW, float panelH, int button) {
 		if (!isInteractive()) return false;
 
-		float popupX = panelX + panelW + GAP;
+		float popupX = computeX(panelX, panelW);
 		if (!inside(mx, my, popupX, panelY, WIDTH, panelH)) return false;
 
 		// Close X
@@ -250,7 +311,7 @@ public final class SettingsPopup {
 
 	public boolean mouseDragged(double mx, double my, int button, float panelX, float panelW) {
 		if (button != 0 || module == null) return false;
-		float popupX = panelX + panelW + GAP;
+		float popupX = computeX(panelX, panelW);
 		float contentX = popupX + PAD_X;
 		float trackW = WIDTH - PAD_X * 2;
 
@@ -286,7 +347,7 @@ public final class SettingsPopup {
 	public boolean mouseScrolled(double mx, double my, double v,
 			float panelX, float panelY, float panelW, float panelH) {
 		if (!isInteractive()) return false;
-		float popupX = panelX + panelW + GAP;
+		float popupX = computeX(panelX, panelW);
 		if (!inside(mx, my, popupX, panelY, WIDTH, panelH)) return false;
 		scrollTarget = Math.max(0.0f, Math.min(maxScroll, scrollTarget - (float) v * 20.0f));
 		scroll.setTarget(scrollTarget);
@@ -320,7 +381,8 @@ public final class SettingsPopup {
 		boolean visible = (y + 40.0f > clipTop) && (y < clipBottom);
 
 		if (visible) {
-			UIRender.text(matrix, font, s.name, x, y, 8.0f,
+			String label = UIRender.ellipsize(font, s.name, 8.0f, w - 28.0f);
+			UIRender.text(matrix, font, label, x, y, 8.0f,
 				ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, a), 0.05f);
 		}
 
@@ -366,9 +428,12 @@ public final class SettingsPopup {
 
 	private float drawSlider(Matrix4f matrix, MsdfFont font, NumberSetting s,
 			float x, float y, float w, float a) {
+		// Reserve a fixed strip on the right for the value label so it never
+		// runs into the slider knob, and so the track has predictable width.
+		float labelW = 28.0f;
+		float trackW = Math.max(20.0f, w - labelW);
 		float trackH = 4.0f;
 		float trackY = y + 4.0f;
-		float trackW = w;
 		float frac = clamp01((float) ((s.get() - s.min) / (s.max - s.min)));
 
 		UIRender.rect(matrix, x, trackY, trackW, trackH, 2.0f,
@@ -377,13 +442,16 @@ public final class SettingsPopup {
 			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, a),
 			ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO,   a));
 
-		float knobX = x + trackW * frac - 4.0f;
+		// Knob — clamped so it can't poke past the track ends.
+		float knobX = Math.max(x, Math.min(x + trackW - 8.0f, x + trackW * frac - 4.0f));
 		UIRender.rect(matrix, knobX, trackY - 3.0f, 8.0f, 10.0f, 4.0f,
 			ColorUtil.multiplyAlpha(0xFFFFFFFF, a));
 
+		// Value label — right-aligned within its reserved strip.
 		String value = String.format("%.1f", s.get());
-		float vw = UIRender.textWidth(font, value, 7.0f);
-		UIRender.text(matrix, font, value, x + w - vw, y + 12.0f, 7.0f,
+		String shown = UIRender.ellipsize(font, value, 7.0f, labelW - 2.0f);
+		float vw = UIRender.textWidth(font, shown, 7.0f);
+		UIRender.text(matrix, font, shown, x + w - vw, y + 2.5f, 7.0f,
 			ColorUtil.multiplyAlpha(Theme.TEXT_SECONDARY, a));
 
 		return y + 22.0f;
@@ -391,9 +459,10 @@ public final class SettingsPopup {
 
 	private float drawColor(Matrix4f matrix, MsdfFont font, ColorSetting s,
 			float x, float y, float w, float a) {
+		float labelW = 24.0f;
 		float trackH = 10.0f;
 		float trackY = y + 2.0f;
-		float trackW = w;
+		float trackW = Math.max(20.0f, w - labelW);
 
 		// 24-segment rainbow gradient with rounded ends
 		int segments = 24;
@@ -412,18 +481,20 @@ public final class SettingsPopup {
 		UIRender.border(matrix, x, trackY, trackW, trackH, trackH * 0.4f, 1.0f,
 			ColorUtil.multiplyAlpha(Theme.CARD_BORDER, a));
 
-		// Knob with inner colour swatch
+		// Knob (clamped to track) with inner colour swatch
 		float frac = clamp01((float) (s.getHue() / 360.0));
-		float knobX = x + trackW * frac - 4.0f;
+		float knobX = Math.max(x, Math.min(x + trackW - 8.0f, x + trackW * frac - 4.0f));
 		float knobY = trackY - 2.0f;
 		UIRender.rect(matrix, knobX, knobY, 8.0f, trackH + 4.0f, 3.0f,
 			ColorUtil.multiplyAlpha(0xFFFFFFFF, a));
 		UIRender.rect(matrix, knobX + 2.0f, knobY + 2.0f, 4.0f, trackH, 2.0f,
 			ColorUtil.multiplyAlpha(s.toArgb(), a));
 
+		// Hue label — right-aligned within reserved strip.
 		String value = String.format("%.0f", s.getHue());
-		float vw = UIRender.textWidth(font, value, 7.0f);
-		UIRender.text(matrix, font, value, x + w - vw, y + 14.0f, 7.0f,
+		String shown = UIRender.ellipsize(font, value, 7.0f, labelW - 2.0f);
+		float vw = UIRender.textWidth(font, shown, 7.0f);
+		UIRender.text(matrix, font, shown, x + w - vw, y + 4.0f, 7.0f,
 			ColorUtil.multiplyAlpha(Theme.TEXT_SECONDARY, a));
 
 		return y + 22.0f;
@@ -443,16 +514,16 @@ public final class SettingsPopup {
 			ColorUtil.multiplyAlpha(open ? Theme.CARD_HOVER : (hovered ? Theme.CARD_HOVER : Theme.CARD_BG), a));
 		UIRender.border(matrix, x, y, w, h, 6.0f, 1.0f,
 			ColorUtil.multiplyAlpha(open ? Theme.ACCENT : Theme.CARD_BORDER, a));
-		UIRender.text(matrix, font, s.get(), x + 8.0f, y + 4.5f, 7.5f,
+
+		// Reserve room on the right for the caret indicator (~8 px) so the
+		// current value never overlaps it.
+		String label = UIRender.ellipsize(font, s.get(), 7.5f, w - 24.0f);
+		UIRender.text(matrix, font, label, x + 8.0f, y + 4.5f, 7.5f,
 			ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, a), 0.05f);
-		// Caret indicator drawn from rects rather than a font glyph: the
-		// "^" character is missing from the bundled biko atlas, which used
-		// to crash the renderer on Android (FoldCraft) when the buffer had
-		// zero vertices.
 		drawCaret(matrix, x + w - 11.0f, y + 6.0f, 5.0f, !open,
 			ColorUtil.multiplyAlpha(Theme.TEXT_MUTED, a));
 
-		// Store the dropdown's rendered position (already includes scroll offset)
+		// Stash for the dropdown overlay
 		if (open) {
 			dropdownX = x;
 			dropdownY = y;
@@ -484,7 +555,8 @@ public final class SettingsPopup {
 			}
 
 			int textColor = isSelected ? 0xFFFFFFFF : Theme.TEXT_SECONDARY;
-			UIRender.text(matrix, font, mode, x + 8.0f, cy + 3.5f, 7.0f,
+			String label = UIRender.ellipsize(font, mode, 7.0f, w - 16.0f);
+			UIRender.text(matrix, font, label, x + 8.0f, cy + 3.5f, 7.0f,
 				ColorUtil.multiplyAlpha(textColor, a), 0.04f);
 
 			cy += rowH + rowGap;
@@ -513,7 +585,8 @@ public final class SettingsPopup {
 			}
 
 			int textColor = selected ? 0xFFFFFFFF : Theme.TEXT_SECONDARY;
-			UIRender.text(matrix, font, opt, x + 8.0f, cy + 3.5f, 7.0f,
+			String label = UIRender.ellipsize(font, opt, 7.0f, w - 16.0f);
+			UIRender.text(matrix, font, label, x + 8.0f, cy + 3.5f, 7.0f,
 				ColorUtil.multiplyAlpha(textColor, a), 0.04f);
 
 			cy += rowH + rowGap;
@@ -521,25 +594,66 @@ public final class SettingsPopup {
 		return cy;
 	}
 
-	private void drawDropdownOverlay(Matrix4f matrix, MsdfFont font, float a,
+	private void drawDropdownOverlay(DrawContext ctx, Matrix4f matrix, MsdfFont font, float a,
 			int mouseX, int mouseY) {
 		ModeSetting s = openDropdown;
-		if (s == null) return;
+		if (s == null) {
+			this.dropdownListY = 0.0f;
+			this.dropdownListH = 0.0f;
+			return;
+		}
 
 		float rowH = 14.0f;
 		float listH = s.modes.size() * rowH;
+
+		// Find the best vertical placement: prefer below, fall back to above,
+		// then pin to whichever side has the most room. All the while keeping
+		// the list inside the popup body.
+		float bodyTop = lastY + HEADER_H + 4.0f;
+		float bodyBottom = lastY + lastH - 4.0f;
+
+		float yBelow = dropdownY + dropdownH + 2.0f;
+		float yAbove = dropdownY - 2.0f - listH;
+
+		float y;
+		float drawnH = listH;
+		if (yBelow + listH <= bodyBottom) {
+			y = yBelow;
+		} else if (yAbove >= bodyTop) {
+			y = yAbove;
+		} else {
+			// Neither side fits — pin and clamp height.
+			y = Math.max(bodyTop, bodyBottom - listH);
+			drawnH = Math.min(listH, bodyBottom - y);
+			if (drawnH <= rowH * 0.5f) {
+				// Practically nothing to draw. Skip without leaving stale state.
+				this.dropdownListY = 0.0f;
+				this.dropdownListH = 0.0f;
+				return;
+			}
+		}
+
+		this.dropdownListY = y;
+		this.dropdownListH = drawnH;
 		float x = dropdownX;
-		float y = dropdownY + dropdownH + 2.0f;
 		float w = dropdownW;
 
-		UIRender.rect(matrix, x, y, w, listH, 6.0f,
+		// Scissor to the popup body so the overlay can never escape.
+		ctx.enableScissor(
+			(int) Math.floor(lastX + 1.0f),
+			(int) Math.floor(bodyTop),
+			(int) Math.ceil(lastX + lastW - 1.0f),
+			(int) Math.ceil(bodyBottom));
+
+		UIRender.rect(matrix, x, y, w, drawnH, 6.0f,
 			ColorUtil.multiplyAlpha(Theme.PANEL_BG, a));
-		UIRender.border(matrix, x, y, w, listH, 6.0f, 1.0f,
+		UIRender.border(matrix, x, y, w, drawnH, 6.0f, 1.0f,
 			ColorUtil.multiplyAlpha(Theme.ACCENT, a));
 
 		float cy = y;
 		String selected = s.get();
 		for (String mode : s.modes) {
+			if (cy >= y + drawnH) break;
 			boolean isSelected = mode.equals(selected);
 			boolean hovered = inside(mouseX, mouseY, x, cy, w, rowH);
 
@@ -553,11 +667,14 @@ public final class SettingsPopup {
 			}
 
 			int textColor = isSelected ? 0xFFFFFFFF : Theme.TEXT_SECONDARY;
-			UIRender.text(matrix, font, mode, x + 8.0f, cy + 3.5f, 7.0f,
+			String label = UIRender.ellipsize(font, mode, 7.0f, w - 16.0f);
+			UIRender.text(matrix, font, label, x + 8.0f, cy + 3.5f, 7.0f,
 				ColorUtil.multiplyAlpha(textColor, a), 0.04f);
 
 			cy += rowH;
 		}
+
+		ctx.disableScissor();
 	}
 
 	// =========================================================================
@@ -570,12 +687,14 @@ public final class SettingsPopup {
 		float contentW = WIDTH - PAD_X * 2;
 		float cy = popupY + HEADER_H + 10.0f - scroll.getValue();
 
-		// 1. Open dropdown (if any) intercepts first
+		// 1. Open dropdown (if any) intercepts first — using the rendered
+		//    overlay position so flip-up dropdowns hit-test correctly.
 		if (openDropdown != null && button == 0) {
-			float listY = dropdownY + dropdownH + 2.0f;
-			float rowH = 14.0f;
-			float listH = openDropdown.modes.size() * rowH;
-			if (inside(mouseX, mouseY, dropdownX, listY, dropdownW, listH)) {
+			float listY = dropdownListY;
+			float listH = dropdownListH;
+			if (listH > 0.0f
+				&& inside(mouseX, mouseY, dropdownX, listY, dropdownW, listH)) {
+				float rowH = 14.0f;
 				int idx = (int) ((mouseY - listY) / rowH);
 				if (idx >= 0 && idx < openDropdown.modes.size()) {
 					openDropdown.set(openDropdown.modes.get(idx));
@@ -609,8 +728,9 @@ public final class SettingsPopup {
 				cy = labelY + 14.0f + ROW_GAP;
 
 			} else if (s instanceof ColorSetting cs) {
+				float labelW = 24.0f;
+				float trackW = Math.max(20.0f, contentW - labelW);
 				float trackY = controlY + 2.0f;
-				float trackW = contentW;
 				if (inside(mouseX, mouseY, contentX, trackY - 2.0f, trackW, 14.0f) && button == 0) {
 					float frac = clamp01((float) ((mouseX - contentX) / trackW));
 					cs.setHue(frac * 360.0);
@@ -620,8 +740,9 @@ public final class SettingsPopup {
 				cy = controlY + 22.0f + ROW_GAP;
 
 			} else if (s instanceof NumberSetting ns) {
+				float labelW = 28.0f;
+				float trackW = Math.max(20.0f, contentW - labelW);
 				float trackY = controlY + 4.0f;
-				float trackW = contentW;
 				if (inside(mouseX, mouseY, contentX, trackY - 4.0f, trackW, 14.0f) && button == 0) {
 					float frac = clamp01((float) ((mouseX - contentX) / trackW));
 					double v = ns.min + (ns.max - ns.min) * frac;
@@ -764,9 +885,6 @@ public final class SettingsPopup {
 	 * vertex buffer to {@code BufferBuilder.end()} and crash on Android.
 	 */
 	private static void drawCaret(Matrix4f m, float x, float y, float size, boolean down, int color) {
-		// 5 wide, 3 tall by default (size = width). Each row is 1 px tall.
-		// down: rows shrink from full width at top to 1 px at bottom (▾)
-		// up:   rows grow from 1 px at top to full width at bottom (▴)
 		int rows = 3;
 		for (int r = 0; r < rows; r++) {
 			float rowW;

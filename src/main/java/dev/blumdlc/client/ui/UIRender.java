@@ -93,6 +93,30 @@ public final class UIRender {
 	}
 
 	/**
+	 * Truncates {@code s} with a trailing ellipsis if its rendered width
+	 * exceeds {@code maxW}. Returns the original string if it fits, an
+	 * empty string if {@code maxW <= 0}, and a best-fit string with
+	 * {@code "..."} suffix otherwise.
+	 */
+	public static String ellipsize(MsdfFont font, String s, float size, float maxW) {
+		if (s == null || s.isEmpty()) return "";
+		if (maxW <= 0.0f) return "";
+		if (textWidth(font, s, size) <= maxW) return s;
+		String dots = "...";
+		float dw = textWidth(font, dots, size);
+		if (dw >= maxW) return ""; // not enough room even for the ellipsis
+		StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < s.length(); i++) {
+			sb.append(s.charAt(i));
+			if (textWidth(font, sb.toString(), size) + dw > maxW) {
+				if (sb.length() > 0) sb.deleteCharAt(sb.length() - 1);
+				break;
+			}
+		}
+		return sb.append(dots).toString();
+	}
+
+	/**
 	 * Draws a texture identified by {@code id}, tinted with {@code color}
 	 * (use {@code 0xFFFFFFFF} for an untinted draw). The texture manager
 	 * auto-registers a {@code ResourceTexture} on first call; if the asset
