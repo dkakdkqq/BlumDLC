@@ -445,7 +445,11 @@ public final class SettingsPopup {
 			ColorUtil.multiplyAlpha(open ? Theme.ACCENT : Theme.CARD_BORDER, a));
 		UIRender.text(matrix, font, s.get(), x + 8.0f, y + 4.5f, 7.5f,
 			ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, a), 0.05f);
-		UIRender.text(matrix, font, open ? "^" : "v", x + w - 12.0f, y + 4.5f, 7.5f,
+		// Caret indicator drawn from rects rather than a font glyph: the
+		// "^" character is missing from the bundled biko atlas, which used
+		// to crash the renderer on Android (FoldCraft) when the buffer had
+		// zero vertices.
+		drawCaret(matrix, x + w - 11.0f, y + 6.0f, 5.0f, !open,
 			ColorUtil.multiplyAlpha(Theme.TEXT_MUTED, a));
 
 		// Store the dropdown's rendered position (already includes scroll offset)
@@ -750,6 +754,33 @@ public final class SettingsPopup {
 
 	private static boolean inside(double mx, double my, float x, float y, float w, float h) {
 		return mx >= x && mx <= x + w && my >= y && my <= y + h;
+	}
+
+	/**
+	 * Tiny font-free caret indicator drawn from 1-px rects. {@code down=true}
+	 * draws ▾, {@code down=false} draws ▴. Avoids depending on glyphs that
+	 * may be missing from the MSDF atlas (the bundled {@code biko} font has
+	 * no {@code ^}), which previously caused the renderer to hand an empty
+	 * vertex buffer to {@code BufferBuilder.end()} and crash on Android.
+	 */
+	private static void drawCaret(Matrix4f m, float x, float y, float size, boolean down, int color) {
+		// 5 wide, 3 tall by default (size = width). Each row is 1 px tall.
+		// down: rows shrink from full width at top to 1 px at bottom (▾)
+		// up:   rows grow from 1 px at top to full width at bottom (▴)
+		int rows = 3;
+		for (int r = 0; r < rows; r++) {
+			float rowW;
+			float rowX;
+			if (down) {
+				rowW = size - r * 2.0f;
+				rowX = x + r;
+			} else {
+				rowW = 1.0f + r * 2.0f;
+				rowX = x + (size - rowW) * 0.5f;
+			}
+			if (rowW < 1.0f) rowW = 1.0f;
+			UIRender.rect(m, rowX, y + r, rowW, 1.0f, 0.0f, color);
+		}
 	}
 
 	private static float clamp01(float v) {

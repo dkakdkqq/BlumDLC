@@ -34,6 +34,16 @@ public record BuiltText(
 	
 	@Override
     public void render(Matrix4f matrix, float x, float y, float z) {
+		// Empty / no-glyph strings produce a buffer with zero vertices.
+		// Calling BufferBuilder.end() on that crashes on Android GLES
+		// (e.g. FoldCraft Launcher) — guard before touching Tessellator.
+		if (this.font == null || this.text == null || this.text.isEmpty()) {
+			return;
+		}
+		if (!this.font.hasRenderable(this.text)) {
+			return;
+		}
+
 		RenderSystem.enableBlend();
 		RenderSystem.defaultBlendFunc();
 		RenderSystem.disableCull();

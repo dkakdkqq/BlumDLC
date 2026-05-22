@@ -57,6 +57,30 @@ public final class MsdfFont {
 		}
 	}
 	
+	/**
+	 * @return {@code true} if at least one character in {@code text} has a
+	 *         glyph in this atlas. Used by callers to avoid handing an empty
+	 *         vertex buffer to the renderer — on some Android / GLES driver
+	 *         stacks (FoldCraft Launcher in particular) ending an empty
+	 *         buffer crashes the game, while on desktop it silently no-ops.
+	 *
+	 *         <p>The {@code biko} atlas shipped with this mod is missing a
+	 *         handful of ASCII chars (apostrophe, caret, tilde); a string
+	 *         consisting solely of those would otherwise produce zero
+	 *         vertices.
+	 */
+	public boolean hasRenderable(String text) {
+		if (text == null || text.isEmpty()) {
+			return false;
+		}
+		for (int i = 0; i < text.length(); i++) {
+			if (this.glyphs.containsKey((int) text.charAt(i))) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	public float getWidth(String text, float size) {
 		int prevChar = -1;
 		float width = 0.0f;
