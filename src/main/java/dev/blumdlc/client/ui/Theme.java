@@ -3,12 +3,12 @@ package dev.blumdlc.client.ui;
 /**
  * The GUI's flat colour palette.
  *
- * <p>Static-final values are surfaces that don't change with the user-chosen
- * client colour (panel chrome, neutral text, search/scrollbar). The accent
- * tones — {@link #ACCENT}, {@link #ACCENT_DARK}, {@link #CARD_ACTIVE_FROM}
- * and {@link #CARD_ACTIVE_TO} — are recomputed every frame from
- * {@link ClientTheme} via {@link #refresh()}, so the rest of the UI can keep
- * reading them as ordinary fields.
+ * <p>Tuned for the "FeverVisual SecondGui" reference scheme: black-translucent
+ * panels with a sharp blue / cyan accent and a brownish version label. The
+ * accent quartet — {@link #ACCENT}, {@link #ACCENT_DARK},
+ * {@link #CARD_ACTIVE_FROM} and {@link #CARD_ACTIVE_TO} — is recomputed every
+ * frame from {@link ClientTheme} via {@link #refresh()}, so the rest of the
+ * UI can keep reading them as ordinary fields.
  */
 public final class Theme {
 
@@ -16,53 +16,55 @@ public final class Theme {
 	//  Backdrop
 	// =========================================================================
 
-	/** Dim layer drawn behind the panel. Slightly softer than pure black so
-	 *  the world stays readable underneath. */
-	public static final int DIM            = 0xB8050710;
+	/** Dim layer drawn behind the panel. */
+	public static final int DIM            = 0xB0000000;
 
 	// =========================================================================
-	//  Panel chrome (cool slate, far less harsh than the original almost-black)
+	//  Panel chrome — translucent black "glass" plates
 	// =========================================================================
 
-	public static final int PANEL_BG       = 0xF20E1018;
+	/** Main panel plate — corresponds to FeverVisual {@code (0,0,0,130)}. */
+	public static final int PANEL_BG       = 0x82000000;
 	public static final int PANEL_BORDER   = 0x33FFFFFF;
-	public static final int SIDEBAR_BG     = 0xFF0A0C13;
-	public static final int DIVIDER        = 0x1AFFFFFF;
+	public static final int SIDEBAR_BG     = 0x82000000;
+	public static final int DIVIDER        = 0x33FFFFFF;
 
 	// =========================================================================
-	//  Cards
+	//  Cards (sidebar items, module rows, popup setting controls)
 	// =========================================================================
 
-	public static final int CARD_BG        = 0xFF181B26;
-	public static final int CARD_HOVER     = 0xFF1F2330;
+	/** Inactive card — slightly darker than the panel so it reads as inset. */
+	public static final int CARD_BG        = 0x60000000;
+	public static final int CARD_HOVER     = 0x80000000;
 	public static final int CARD_BORDER    = 0x22FFFFFF;
 
 	/** Active-card gradient start. Refreshed each frame from {@link ClientTheme}. */
-	public static int CARD_ACTIVE_FROM     = 0xFF8B5CF6;
+	public static int CARD_ACTIVE_FROM     = 0xFF005DFF;
 	/** Active-card gradient end.   Refreshed each frame from {@link ClientTheme}. */
-	public static int CARD_ACTIVE_TO       = 0xFF6366F1;
+	public static int CARD_ACTIVE_TO       = 0xFF00FFFF;
 
 	// =========================================================================
 	//  Accents (refreshed each frame)
 	// =========================================================================
 
-	public static int ACCENT               = 0xFFA78BFA;
-	public static int ACCENT_DARK          = 0xFF5B45A8;
-	public static final int DANGER         = 0xFFF87171;
+	public static int ACCENT               = 0xFF00FFFF;
+	public static int ACCENT_DARK          = 0xFF005DFF;
+	/** Brownish red repurposed from the FeverVisual version-label colour. */
+	public static final int DANGER         = 0xFFA65252;
 
 	// =========================================================================
 	//  Text
 	// =========================================================================
 
-	public static final int TEXT_PRIMARY   = 0xFFE9EAEC;
-	public static final int TEXT_SECONDARY = 0xFF9DA0AC;
-	public static final int TEXT_MUTED     = 0xFF565969;
+	public static final int TEXT_PRIMARY   = 0xFFFFFFFF;
+	public static final int TEXT_SECONDARY = 0xFFB6B9C2;
+	public static final int TEXT_MUTED     = 0xFF7B7E8C;
 
 	// =========================================================================
 	//  Search / scrollbar
 	// =========================================================================
 
-	public static final int SEARCH_BG      = 0xFF14171F;
+	public static final int SEARCH_BG      = 0x64000000;
 	public static final int SCROLLBAR_BG   = 0x14FFFFFF;
 	public static final int SCROLLBAR_FG   = 0x55FFFFFF;
 

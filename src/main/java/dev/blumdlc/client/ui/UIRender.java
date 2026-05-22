@@ -7,6 +7,9 @@ import dev.blumdlc.client.builders.states.QuadColorState;
 import dev.blumdlc.client.builders.states.QuadRadiusState;
 import dev.blumdlc.client.builders.states.SizeState;
 import dev.blumdlc.client.msdf.MsdfFont;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.texture.AbstractTexture;
+import net.minecraft.util.Identifier;
 
 /**
  * Thin facade around the existing builders so the GUI never touches vanilla draw helpers.
@@ -87,6 +90,27 @@ public final class UIRender {
 
 	public static float textWidth(MsdfFont font, String s, float size) {
 		return font.getWidth(s, size);
+	}
+
+	/**
+	 * Draws a texture identified by {@code id}, tinted with {@code color}
+	 * (use {@code 0xFFFFFFFF} for an untinted draw). The texture manager
+	 * auto-registers a {@code ResourceTexture} on first call; if the asset
+	 * is missing this becomes a no-op.
+	 */
+	public static void texture(Matrix4f m, Identifier id, float x, float y, float w, float h, int color) {
+		AbstractTexture tex = MinecraftClient.getInstance().getTextureManager().getTexture(id);
+		if (tex == null) {
+			return;
+		}
+		Builder.texture()
+			.size(new SizeState(w, h))
+			.radius(QuadRadiusState.NO_ROUND)
+			.color(new QuadColorState(color))
+			.smoothness(1.0f)
+			.texture(0.0f, 0.0f, 1.0f, 1.0f, tex)
+			.build()
+			.render(m, x, y);
 	}
 
 	private UIRender() {

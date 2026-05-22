@@ -43,6 +43,8 @@ public final class ClientTheme {
 	// ---------------------------------------------------------------------
 
 	public static final List<ClientTheme> PRESETS = List.of(
+		// Default — matches the FeverVisual SecondGui blue/cyan accent.
+		new ClientTheme("Frost",    0xFF005DFF, 0xFF00FFFF, 0xFF4DAFFF),
 		new ClientTheme("Aurora",   0xFF8B5CF6, 0xFF6366F1, 0xFFA78BFA),
 		new ClientTheme("Lavender", 0xFFB892FF, 0xFF7C5CFF, 0xFFB8A9FF),
 		new ClientTheme("Ocean",    0xFF22D3EE, 0xFF3B82F6, 0xFF60A5FA),
