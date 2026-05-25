@@ -6,17 +6,22 @@ import dev.blumdlc.client.modules.HudModule;
 import dev.blumdlc.client.msdf.MsdfFont;
 import dev.blumdlc.client.ui.ClientTheme;
 import dev.blumdlc.client.ui.Fonts;
-import dev.blumdlc.client.ui.Theme;
 import dev.blumdlc.client.ui.UIRender;
 import dev.blumdlc.client.ui.util.ColorUtil;
+import net.minecraft.util.Identifier;
 
 
 /**
  * Premium "Bloom" watermark — a luxurious floating glass badge with multi-layer
  * blur backdrop, animated glow ring, gradient text, shimmer highlight and
- * ambient breathing pulse. No netherite icon, just pure typography excellence.
+ * ambient breathing pulse. Now featuring the official Bloom logo on the left
+ * with the brand wordmark next to it.
  */
 public final class Watermark extends HudModule {
+
+	/** The official Bloom logo bundled in resources. */
+	private static final Identifier LOGO_TEX =
+		Identifier.of("blumdlc", "textures/logo/logo.png");
 
 	private float lastW = 90.0f;
 	private float lastH = 28.0f;
@@ -25,7 +30,7 @@ public final class Watermark extends HudModule {
 	private float breathPhase = 0.0f;
 
 	public Watermark() {
-		super("Watermark", "Premium Bloom badge with glow and blur");
+		super("Watermark", "Premium Bloom badge with logo, glow and blur");
 		this.enabled = true;
 	}
 
@@ -45,12 +50,14 @@ public final class Watermark extends HudModule {
 		// --- Configuration ---
 		String brandText = "Bloom";
 		float fontSize = 10.0f;
-		float padX = 14.0f;
+		float padX = 10.0f;
 		float padY = 8.0f;
+		float logoGap = 6.0f;
 
-		// Measure text
+		// Measure
 		float textW = UIRender.textWidth(font, brandText, fontSize);
-		float w = textW + padX * 2.0f;
+		float logoSize = fontSize + 2.0f; // a touch taller than the text height
+		float w = padX + logoSize + logoGap + textW + padX;
 		float h = fontSize + padY * 2.0f;
 		lastW = w;
 		lastH = h;
@@ -104,17 +111,15 @@ public final class Watermark extends HudModule {
 		float borderAlpha = 0.5f + breathVal * 0.25f;
 		int borderFrom = ColorUtil.withAlpha(accentFrom, borderAlpha);
 		int borderTo = ColorUtil.withAlpha(accentTo, borderAlpha);
-		// Top-left to bottom-right gradient border
 		UIRender.border(matrix, px, py, w, h, 8.0f, 0.9f,
 			ColorUtil.lerp(borderFrom, borderTo, 0.5f));
 
 		// =====================================================================
 		// Layer 6: Top highlight shimmer line (moves with time)
 		// =====================================================================
-		float shimmerPhase = (System.currentTimeMillis() % 4000L) / 4000.0f; // 0..1 over 4 sec
+		float shimmerPhase = (System.currentTimeMillis() % 4000L) / 4000.0f;
 		float shimmerX = px + 4.0f + (w - 8.0f) * shimmerPhase;
 		float shimmerW = 24.0f;
-		// Clamp shimmer to not exceed badge bounds
 		float shimmerEnd = Math.min(shimmerX + shimmerW, px + w - 4.0f);
 		float actualShimmerW = shimmerEnd - shimmerX;
 		if (actualShimmerW > 2.0f) {
@@ -141,9 +146,26 @@ public final class Watermark extends HudModule {
 		UIRender.rect(matrix, igx, igy, innerGlowW, innerGlowH, 4.0f, innerGlowColor);
 
 		// =====================================================================
-		// Layer 9: Brand text — gradient coloured with thick MSDF for clarity
+		// Layer 9: LOGO — official Bloom logo on the left, gently glowing.
 		// =====================================================================
-		float tx = px + padX;
+		float logoX = px + padX;
+		float logoY = py + (h - logoSize) * 0.5f;
+
+		// soft halo behind the logo so it pops on the dark panel
+		int logoHalo = ColorUtil.withAlpha(accent, 0.28f + breathVal * 0.10f);
+		UIRender.rect(matrix,
+			logoX - 2.0f, logoY - 2.0f,
+			logoSize + 4.0f, logoSize + 4.0f,
+			3.5f, logoHalo);
+
+		// the logo itself, untinted (keep its own colours)
+		UIRender.texture(matrix, LOGO_TEX,
+			logoX, logoY, logoSize, logoSize, 0xFFFFFFFF);
+
+		// =====================================================================
+		// Layer 10: Brand text — gradient coloured with thick MSDF for clarity
+		// =====================================================================
+		float tx = logoX + logoSize + logoGap;
 		float ty = py + padY;
 
 		// Shadow text layer (subtle depth)
@@ -154,24 +176,19 @@ public final class Watermark extends HudModule {
 		// Main text — use accent colour with slight brightness boost
 		int textColor = ColorUtil.lerp(accentFrom, accentTo,
 			0.3f + breathVal * 0.2f);
-		// Brighten text slightly for premium feel
 		textColor = ColorUtil.lerp(textColor, 0xFFFFFFFF, 0.25f);
 		UIRender.text(matrix, font, brandText, tx, ty, fontSize,
 			textColor, 0.07f);
 
 		// =====================================================================
-		// Layer 10: Subtle corner accents (premium jewel-like dots)
+		// Layer 11: Subtle corner accents (premium jewel-like dots)
 		// =====================================================================
 		float dotSize = 1.8f;
 		float dotOff = 3.5f;
 		int dotColor = ColorUtil.withAlpha(accent, 0.35f + breathVal * 0.15f);
-		// Top-left
 		UIRender.rect(matrix, px + dotOff, py + dotOff, dotSize, dotSize, 0.9f, dotColor);
-		// Top-right
 		UIRender.rect(matrix, px + w - dotOff - dotSize, py + dotOff, dotSize, dotSize, 0.9f, dotColor);
-		// Bottom-left
 		UIRender.rect(matrix, px + dotOff, py + h - dotOff - dotSize, dotSize, dotSize, 0.9f, dotColor);
-		// Bottom-right
 		UIRender.rect(matrix, px + w - dotOff - dotSize, py + h - dotOff - dotSize, dotSize, dotSize, 0.9f, dotColor);
 	}
 }

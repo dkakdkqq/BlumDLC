@@ -20,6 +20,7 @@ import dev.blumdlc.client.util.KeyName;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.Text;
+import net.minecraft.util.Identifier;
 
 /**
  * DropDown ClickGUI — classic category panels at the top of the screen,
@@ -40,6 +41,11 @@ public final class ClickGuiScreen extends Screen {
 	private static final float CORNER        = 4.0f;
 	private static final float GAP           = 3.0f;
 	private static final float PANEL_GAP     = 4.0f;
+
+	/** Official Bloom logo — bundled in resources. */
+	private static final Identifier LOGO_TEX =
+		Identifier.of("blumdlc", "textures/logo/logo.png");
+	private static final String     BRAND    = "Bloom";
 
 	// =========================================================================
 	//  Category panels
@@ -111,7 +117,69 @@ public final class ClickGuiScreen extends Screen {
 			panel.render(m, font, mouseX, mouseY, open, delta);
 		}
 
+		// Centred branding badge at the bottom — logo + "Bloom" wordmark.
+		drawBrandBadge(m, font, open);
+
 		super.render(context, mouseX, mouseY, delta);
+	}
+
+	/**
+	 * Floating logo + wordmark badge anchored to the bottom-centre of the
+	 * screen. Mirrors the Watermark HUD style at a smaller scale so the
+	 * GUI always shows the official Bloom branding regardless of which
+	 * panels are open.
+	 */
+	private void drawBrandBadge(Matrix4f m, MsdfFont font, float open) {
+		if (open < 0.01f) return;
+
+		float fontSize = 11.0f;
+		float padX = 12.0f;
+		float padY = 7.0f;
+		float gap  = 6.0f;
+		float logoSize = fontSize + 3.0f;
+
+		float textW = UIRender.textWidth(font, BRAND, fontSize);
+		float w = padX + logoSize + gap + textW + padX;
+		float h = fontSize + padY * 2.0f;
+
+		float bx = (this.width - w) * 0.5f;
+		float by = this.height - h - 12.0f;
+
+		// Subtle accent halo behind the badge.
+		int accent = ClientTheme.accent();
+		UIRender.rect(m, bx - 5.0f, by - 4.0f, w + 10.0f, h + 8.0f, 12.0f,
+			ColorUtil.withAlpha(accent, 0.18f * open));
+
+		// Frosted glass background.
+		UIRender.blur(m, bx, by, w, h, 8.0f, 12.0f,
+			ColorUtil.withAlpha(0x000D1117, 0.55f * open));
+		UIRender.rectGradientV(m, bx, by, w, h, 8.0f,
+			ColorUtil.withAlpha(0x0D1117, 0.85f * open),
+			ColorUtil.withAlpha(0x070A12, 0.92f * open));
+		UIRender.border(m, bx, by, w, h, 8.0f, 0.9f,
+			ColorUtil.withAlpha(accent, 0.55f * open));
+
+		// Bottom accent line (uses theme gradient).
+		UIRender.rectGradientH(m, bx + 6.0f, by + h - 1.6f, w - 12.0f, 1.6f, 0.8f,
+			ColorUtil.withAlpha(ClientTheme.from(), 0.85f * open),
+			ColorUtil.withAlpha(ClientTheme.to(),   0.85f * open));
+
+		// Logo — render with full alpha (the panel alpha already comes from open).
+		float logoX = bx + padX;
+		float logoY = by + (h - logoSize) * 0.5f;
+		UIRender.texture(m, LOGO_TEX,
+			logoX, logoY, logoSize, logoSize,
+			ColorUtil.withAlpha(0xFFFFFF, open));
+
+		// "Bloom" text — gradient-tinted toward white for crispness.
+		float tx = logoX + logoSize + gap;
+		float ty = by + padY;
+		int textColor = ColorUtil.lerp(ClientTheme.from(), ClientTheme.to(), 0.4f);
+		textColor = ColorUtil.lerp(textColor, 0xFFFFFFFF, 0.3f);
+		UIRender.text(m, font, BRAND, tx + 0.4f, ty + 0.6f, fontSize,
+			ColorUtil.withAlpha(0x000000, 0.5f * open), 0.06f);
+		UIRender.text(m, font, BRAND, tx, ty, fontSize,
+			ColorUtil.withAlpha(textColor, open), 0.07f);
 	}
 
 	// =========================================================================
