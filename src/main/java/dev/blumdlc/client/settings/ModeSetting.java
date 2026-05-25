@@ -2,24 +2,18 @@ package dev.blumdlc.client.settings;
 
 import java.util.List;
 
+/**
+ * A pick-one-of-many string setting. Always rendered as a collapsed dropdown
+ * by the GUI — there is no "expanded radio list" mode any more, the user
+ * asked for a uniform dropdown experience across every module.
+ */
 public final class ModeSetting extends Setting<String> {
 
 	public final List<String> modes;
 
-	/**
-	 * When true, the ClickGUI draws this setting as an always-visible
-	 * radio list instead of a collapsed dropdown selector.
-	 */
-	public final boolean expanded;
-
 	public ModeSetting(String name, String defaultValue, String... modes) {
-		this(name, defaultValue, false, modes);
-	}
-
-	public ModeSetting(String name, String defaultValue, boolean expanded, String... modes) {
 		super(name, defaultValue);
 		this.modes = List.of(modes);
-		this.expanded = expanded;
 	}
 
 	public boolean is(String mode) {

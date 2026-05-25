@@ -13,22 +13,28 @@ import dev.blumdlc.client.settings.NumberSetting;
 import dev.blumdlc.client.ui.Fonts;
 import dev.blumdlc.client.ui.Theme;
 import dev.blumdlc.client.ui.UIRender;
+import dev.blumdlc.client.ui.hud.HudStyle;
 import dev.blumdlc.client.ui.util.ColorUtil;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.PlayerListEntry;
 
 /**
- * Bottom-right alerter for staff members: when a player whose name is in the
- * watch list joins the server (or comes within tab-list visibility), an
- * animated card slides in from the right and fades out after a few seconds.
+ * Bottom-right alerter for staff members joining the server. When a watched
+ * tag (e.g. {@code "admin"}) appears in a newly-seen player name, an
+ * animated alert card slides in from the right and fades out a few seconds
+ * later.
  *
- * <p>Movable via the chat-screen HUD editor.
+ * <p>Each card uses {@link HudStyle#card} with a fixed danger-red accent
+ * strip so staff alerts are visually distinct from the rest of the HUDs.
+ * Movable through the chat-screen HUD editor.
  */
 public final class StaffHud extends HudModule {
 
-	private static final float CARD_W = 160.0f;
-	private static final float CARD_H = 32.0f;
-	private static final float CARD_GAP = 6.0f;
+	private static final float CARD_W   = 168.0f;
+	private static final float CARD_H   = 30.0f;
+	private static final float CARD_GAP = 5.0f;
+	/** Danger red used for the accent strip and the title text. */
+	private static final int   ACCENT   = 0xFFEF4444;
 
 	public final MultiSetting watchList;
 	public final NumberSetting alertSeconds;
@@ -38,7 +44,7 @@ public final class StaffHud extends HudModule {
 	);
 
 	private final List<String> seenLastTick = new ArrayList<>();
-	private final List<Alert> alerts = new ArrayList<>();
+	private final List<Alert>  alerts       = new ArrayList<>();
 	private float lastHeight = CARD_H;
 
 	public StaffHud() {
@@ -51,15 +57,8 @@ public final class StaffHud extends HudModule {
 		addSetting(alertSeconds);
 	}
 
-	@Override
-	public float hudWidth() {
-		return CARD_W;
-	}
-
-	@Override
-	public float hudHeight() {
-		return lastHeight;
-	}
+	@Override public float hudWidth()  { return CARD_W; }
+	@Override public float hudHeight() { return lastHeight; }
 
 	@Override
 	protected void computeDefaultPosition(int sw, int sh) {
@@ -93,6 +92,7 @@ public final class StaffHud extends HudModule {
 		long now = System.currentTimeMillis();
 		long lifeMillis = (long) (alertSeconds.get() * 1000.0);
 
+		// Drop expired alerts
 		Iterator<Alert> it = alerts.iterator();
 		while (it.hasNext()) {
 			if (now - it.next().shownAt > lifeMillis) it.remove();
@@ -103,49 +103,45 @@ public final class StaffHud extends HudModule {
 		if (alerts.isEmpty()) {
 			if (editing) {
 				lastHeight = CARD_H;
-				drawAlert(matrix, font, "drag me", this.x, this.y, CARD_W, CARD_H, 0.6f, true);
+				drawAlert(matrix, font, "drag me", this.x, this.y, 0.6f, true);
 			} else {
 				lastHeight = 0.0f;
 			}
 			return;
 		}
 
-		// Render most-recent alert at the top of the stack, growing upward
-		// from this.y. The HUD's top-left bounding box therefore shifts up as
-		// more alerts pile up — that mirrors the historical bottom-right feel.
 		float totalH = alerts.size() * CARD_H + (alerts.size() - 1) * CARD_GAP;
 		lastHeight = totalH;
 
 		float y = this.y;
-		for (int i = 0; i < alerts.size(); i++) {
-			Alert a = alerts.get(i);
+		for (Alert a : alerts) {
 			float age = (now - a.shownAt) / Math.max(1.0f, lifeMillis);
+			// Slide in over the first ~17% of life, fade out over the last ~25%.
 			float slideIn = Math.min(1.0f, age * 6.0f);
 			float fadeOut = Math.min(1.0f, (1.0f - age) * 4.0f);
-			float ax = this.x + (1.0f - slideIn) * 28.0f;
-			float alpha = fadeOut;
+			float alpha   = Math.max(0.0f, Math.min(slideIn, fadeOut));
+			float ax      = this.x + (1.0f - slideIn) * 28.0f;
 
-			drawAlert(matrix, font, a.name, ax, y, CARD_W, CARD_H, alpha, false);
+			drawAlert(matrix, font, a.name, ax, y, alpha, false);
 			y += CARD_H + CARD_GAP;
 		}
 	}
 
 	private void drawAlert(Matrix4f matrix, MsdfFont font, String name,
-			float x, float y, float w, float h, float alpha, boolean ghost) {
-		int bg     = ColorUtil.multiplyAlpha(0xFF1A1A24, alpha);
-		int bgEnd  = ColorUtil.multiplyAlpha(0xFF23232F, alpha);
-		int border = ColorUtil.multiplyAlpha(ghost ? Theme.PANEL_BORDER : Theme.DANGER, alpha);
-		int title  = ColorUtil.multiplyAlpha(ghost ? Theme.TEXT_SECONDARY : Theme.DANGER, alpha);
-		int sub    = ColorUtil.multiplyAlpha(Theme.TEXT_SECONDARY, alpha);
+			float x, float y, float alpha, boolean ghost) {
+		int accent = ghost ? Theme.PANEL_BORDER : ACCENT;
+		HudStyle.card(matrix, x, y, CARD_W, CARD_H, alpha, accent);
 
-		UIRender.rectGradientH(matrix, x, y, w, h, 6.0f, bg, bgEnd);
-		UIRender.border(matrix, x, y, w, h, 6.0f, 1.0f, border);
-		UIRender.rect(matrix, x, y, 2.5f, h, 1.0f, border);
+		float contentX = x + HudStyle.ACCENT_W + 4.0f + (HudStyle.PAD_X - 4.0f);
 
-		UIRender.text(matrix, font, ghost ? "Staff alert" : "Staff online",
-			x + 10.0f, y + 5.0f, 9.0f, title, 0.07f);
-		UIRender.text(matrix, font, name, x + 10.0f, y + 17.0f,
-			8.0f, sub, 0.05f);
+		String title = ghost ? "Staff alert" : "Staff online";
+		int titleColor = ghost ? Theme.TEXT_SECONDARY : ACCENT;
+		UIRender.text(matrix, font, title, contentX, y + 5.0f, 8.5f,
+			ColorUtil.multiplyAlpha(titleColor, alpha), 0.07f);
+
+		String shown = UIRender.ellipsize(font, name, 7.5f, CARD_W - (contentX - x) - HudStyle.PAD_X);
+		UIRender.text(matrix, font, shown, contentX, y + 17.0f, 7.5f,
+			ColorUtil.multiplyAlpha(Theme.TEXT_SECONDARY, alpha), 0.05f);
 	}
 
 	private boolean isStaff(String name) {

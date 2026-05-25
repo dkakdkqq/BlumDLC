@@ -405,7 +405,7 @@ public final class SettingsPopup {
 			else ny += 22.0f;
 		} else if (s instanceof ModeSetting ms) {
 			if (visible) ny = drawMode(matrix, font, ms, x, ny, w, a, mouseX, mouseY);
-			else ny += (ms.expanded ? ms.modes.size() * 17.0f : 18.0f);
+			else ny += 18.0f;
 		} else if (s instanceof MultiSetting mu) {
 			if (visible) ny = drawMulti(matrix, font, mu, x, ny, w, a, mouseX, mouseY);
 			else ny += mu.options.size() * 17.0f;
@@ -508,10 +508,6 @@ public final class SettingsPopup {
 
 	private float drawMode(Matrix4f matrix, MsdfFont font, ModeSetting s,
 			float x, float y, float w, float a, int mouseX, int mouseY) {
-		if (s.expanded) {
-			return drawModeExpanded(matrix, font, s, x, y, w, a, mouseX, mouseY);
-		}
-
 		float h = 16.0f;
 		boolean hovered = inside(mouseX, mouseY, x, y, w, h);
 		boolean open = (openDropdown == s);
@@ -538,39 +534,6 @@ public final class SettingsPopup {
 			dropdownH = h;
 		}
 		return y + h + 2.0f;
-	}
-
-	private float drawModeExpanded(Matrix4f matrix, MsdfFont font, ModeSetting s,
-			float x, float y, float w, float a, int mouseX, int mouseY) {
-		float rowH = 14.0f;
-		float rowGap = 3.0f;
-		float cy = y;
-		String selected = s.get();
-		for (String mode : s.modes) {
-			boolean isSelected = mode.equals(selected);
-			boolean hovered = inside(mouseX, mouseY, x, cy, w, rowH);
-
-			if (isSelected) {
-				float p = 0.85f + 0.15f * (float) Math.sin(now() * 2.4);
-				UIRender.rectGradientH(matrix, x, cy, w, rowH, 6.0f,
-					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, p * a),
-					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO,   p * a));
-			} else {
-				UIRender.rectGradientV(matrix, x, cy, w, rowH, 6.0f,
-					ColorUtil.multiplyAlpha(hovered ? Theme.CARD_HOVER : Theme.CARD_BG_TOP, a),
-					ColorUtil.multiplyAlpha(hovered ? Theme.CARD_HOVER : Theme.CARD_BG_BOT, a));
-				UIRender.border(matrix, x, cy, w, rowH, 6.0f, 1.0f,
-					ColorUtil.multiplyAlpha(Theme.CARD_BORDER, 0.5f * a));
-			}
-
-			int textColor = isSelected ? 0xFFFFFFFF : Theme.TEXT_SECONDARY;
-			String label = UIRender.ellipsize(font, mode, 7.0f, w - 16.0f);
-			UIRender.text(matrix, font, label, x + 8.0f, cy + 3.5f, 7.0f,
-				ColorUtil.multiplyAlpha(textColor, a), 0.04f);
-
-			cy += rowH + rowGap;
-		}
-		return cy;
 	}
 
 	private float drawMulti(Matrix4f matrix, MsdfFont font, MultiSetting s,
@@ -768,27 +731,12 @@ public final class SettingsPopup {
 				cy = controlY + 22.0f + ROW_GAP;
 
 			} else if (s instanceof ModeSetting ms) {
-				if (ms.expanded) {
-					float rowH = 14.0f;
-					float rowGap = 3.0f;
-					float ry = controlY;
-					for (String mode : ms.modes) {
-						if (inside(mouseX, mouseY, contentX, ry, contentW, rowH) && button == 0) {
-							ms.set(mode);
-							cachedSettingsHeight = -1.0f;
-							return true;
-						}
-						ry += rowH + rowGap;
-					}
-					cy = ry + ROW_GAP;
-				} else {
-					float h = 16.0f;
-					if (inside(mouseX, mouseY, contentX, controlY, contentW, h) && button == 0) {
-						openDropdown = (openDropdown == ms) ? null : ms;
-						return true;
-					}
-					cy = controlY + h + 2.0f + ROW_GAP;
+				float h = 16.0f;
+				if (inside(mouseX, mouseY, contentX, controlY, contentW, h) && button == 0) {
+					openDropdown = (openDropdown == ms) ? null : ms;
+					return true;
 				}
+				cy = controlY + h + 2.0f + ROW_GAP;
 
 			} else if (s instanceof MultiSetting mu) {
 				float rowH = 14.0f;
@@ -826,8 +774,8 @@ public final class SettingsPopup {
 				h += 12.0f + 22.0f;
 			} else if (s instanceof NumberSetting) {
 				h += 12.0f + 22.0f;
-			} else if (s instanceof ModeSetting ms) {
-				h += 12.0f + (ms.expanded ? ms.modes.size() * 17.0f : 18.0f);
+			} else if (s instanceof ModeSetting) {
+				h += 12.0f + 18.0f;
 			} else if (s instanceof MultiSetting mu) {
 				h += 12.0f + mu.options.size() * 17.0f;
 			} else {

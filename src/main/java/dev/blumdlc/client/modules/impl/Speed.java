@@ -15,7 +15,7 @@ public final class Speed extends Module {
 
 	public Speed() {
 		super("Speed", "Increases your movement speed", Category.MOVEMENT);
-		this.mode = new ModeSetting("Mode", "Strafe", true, "Strafe", "Vanilla", "BHop");
+		this.mode = new ModeSetting("Mode", "Strafe", "Strafe", "Vanilla", "BHop");
 		this.multiplier = new NumberSetting("Speed", 1.5, 1.0, 5.0, 0.1);
 		addSetting(mode);
 		addSetting(multiplier);

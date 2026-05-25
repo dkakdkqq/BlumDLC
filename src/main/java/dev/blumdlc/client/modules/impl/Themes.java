@@ -11,9 +11,7 @@ import dev.blumdlc.client.ui.ClientTheme;
  * client's accent colour. The selected preset is pushed straight into
  * {@link ClientTheme}, which the rest of the GUI / HUD pulls from each frame.
  *
- * <p>The dropdown is rendered as an always-expanded radio list (see
- * {@link ModeSetting}'s {@code expanded} flag) so picking a colour is one
- * click. Changes are picked up by {@link #syncAll()}, called once per frame
+ * <p>Changes are picked up by {@link #syncAll()}, called once per frame
  * by the GUI render loop and the HUD render callback — that way the theme
  * applies the moment the user clicks an option, no extra "apply" toggle
  * needed.
@@ -35,7 +33,7 @@ public final class Themes extends Module {
 		for (int i = 0; i < ClientTheme.PRESETS.size(); i++) {
 			names[i] = ClientTheme.PRESETS.get(i).name;
 		}
-		this.palette = new ModeSetting("Palette", ClientTheme.active().name, true, names);
+		this.palette = new ModeSetting("Palette", ClientTheme.active().name, names);
 		addSetting(this.palette);
 	}
 
