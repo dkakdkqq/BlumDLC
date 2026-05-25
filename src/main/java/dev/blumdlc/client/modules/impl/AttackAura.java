@@ -30,6 +30,7 @@ import net.minecraft.item.TridentItem;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.util.Hand;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 
@@ -96,6 +97,17 @@ public final class AttackAura extends Module {
 	/** Resolved aim point inside the current target's hitbox (cached for HUDs). */
 	private Vec3d currentAimPoint;
 
+	/**
+	 * Aim point as an offset from the target's bounding-box centre, kept
+	 * across ticks so we don't pick a brand-new spot every frame. The
+	 * resulting absolute position is recomputed each tick from the live
+	 * box centre — so the offset tracks the target as it moves while the
+	 * picked spot ("head", "left side", ...) stays stable.
+	 */
+	private Vec3d cachedAimOffset;
+	/** Identity guard so the cached offset is invalidated on target swap. */
+	private LivingEntity cachedAimFor;
+
 	private final Random random = new Random();
 
 	// =========================================================================
@@ -156,6 +168,8 @@ public final class AttackAura extends Module {
 		this.target = null;
 		this.rotating = false;
 		this.currentAimPoint = null;
+		this.cachedAimOffset = null;
+		this.cachedAimFor = null;
 	}
 
 	// =========================================================================
@@ -199,17 +213,14 @@ public final class AttackAura extends Module {
 		}
 		commitTarget(picked);
 
-		// 2. Find a hit point inside the target's hitbox that we can actually
-		//    see. If "Through walls" is on we skip the LOS gate and aim at the
-		//    closest box point regardless.
+		// 2. Find a hit point inside the target's hitbox we can actually
+		//    see, preserving last tick's choice for stability so the
+		//    rotation isn't yanked between equally good fallback points
+		//    every frame. resolveAimPoint also handles "Through walls".
 		Vec3d eyes = player.getCameraPosVec(1.0f);
 		double rangeSq = range.get() * range.get();
-		Vec3d aimPoint;
-		if (extras.isSelected("Through walls")) {
-			aimPoint = RotationUtil.closestPointInBox(eyes, target.getBoundingBox());
-		} else {
-			aimPoint = RotationUtil.findVisibleAimPoint(world, eyes, target, player, rangeSq);
-		}
+		boolean throughWalls = extras.isSelected("Through walls");
+		Vec3d aimPoint = resolveAimPoint(world, eyes, target, player, rangeSq, throughWalls);
 		this.currentAimPoint = aimPoint;
 
 		// 3. Rotate toward the aim point.
@@ -217,21 +228,42 @@ public final class AttackAura extends Module {
 		applyRotationStep(player, aim[0], aim[1]);
 
 		// 4. Click — but only when everything is ready.
-		if (canAttackNow(player, eyes, aimPoint, aim)) {
+		if (canAttackNow(player, eyes, aimPoint, aim, world, throughWalls)) {
 			swingAndAttack(client, player, this.target);
 		}
 	}
 
 	private void releaseTarget() {
+		boolean wasRotating = this.rotating;
+		// In "Free" mode the server has been holding our synthetic rotation
+		// since the last LookAndOnGround we sent. Vanilla won't update it
+		// until the user physically moves the mouse — which means that until
+		// they do, manual attacks land at our last fake angle, not at the
+		// crosshair. Send one final rotation packet that snaps the server
+		// back to the player's actual local rotation.
+		if (wasRotating && movementCorrection.is("Free")) {
+			MinecraftClient client = MinecraftClient.getInstance();
+			ClientPlayerEntity player = client.player;
+			ClientPlayNetworkHandler net = client.getNetworkHandler();
+			if (player != null && net != null) {
+				net.sendPacket(new PlayerMoveC2SPacket.LookAndOnGround(
+					player.getYaw(), player.getPitch(),
+					player.isOnGround(), player.horizontalCollision));
+			}
+		}
 		this.target = null;
 		this.rotating = false;
 		this.currentAimPoint = null;
+		this.cachedAimOffset = null;
+		this.cachedAimFor = null;
 	}
 
 	private void commitTarget(LivingEntity picked) {
 		if (this.target != picked) {
 			this.target = picked;
 			this.targetLockedAtMs = System.currentTimeMillis();
+			this.cachedAimOffset = null;
+			this.cachedAimFor = null;
 		}
 	}
 
@@ -435,13 +467,15 @@ public final class AttackAura extends Module {
 				jitterPitch = jitter(0.14f, deltaPitch);
 			}
 			case "ReallyWorld" -> {
-				// Distance-aware ease: bigger remaining angle → faster step.
+				// Distance-aware ease: bigger remaining angle → faster step,
+				// so we close 60° flicks in 3-4 ticks but still glide in
+				// gently for the final degree.
 				float remaining = Math.abs(deltaYaw) + Math.abs(deltaPitch);
-				float boost = MathHelper.clamp(remaining / 60.0f, 0.0f, 1.0f);
-				float yawFactor   = 0.34f + 0.10f * boost;     // 0.34..0.44
-				float pitchFactor = 0.40f + 0.08f * boost;     // 0.40..0.48
-				stepYaw   = RotationUtil.easeStep(deltaYaw,   yawFactor,   3.5f, 24.0f);
-				stepPitch = RotationUtil.easeStep(deltaPitch, pitchFactor, 3.0f, 16.0f);
+				float boost = MathHelper.clamp(remaining / 50.0f, 0.0f, 1.0f);
+				float yawFactor   = 0.38f + 0.12f * boost;     // 0.38..0.50
+				float pitchFactor = 0.42f + 0.10f * boost;     // 0.42..0.52
+				stepYaw   = RotationUtil.easeStep(deltaYaw,   yawFactor,   3.5f, 28.0f);
+				stepPitch = RotationUtil.easeStep(deltaPitch, pitchFactor, 3.0f, 18.0f);
 				jitterYaw   = jitter(0.40f, deltaYaw);
 				jitterPitch = jitter(0.28f, deltaPitch);
 			}
@@ -485,11 +519,51 @@ public final class AttackAura extends Module {
 	}
 
 	// =========================================================================
+	// Aim-point resolution (sticky cache)
+	// =========================================================================
+
+	/**
+	 * Pick a hit point inside {@code target}'s bounding box, preferring last
+	 * tick's choice when it's still reachable + visible. Caching the offset
+	 * (rather than the absolute position) means the aim point follows the
+	 * target as it moves while staying glued to the same body part — this is
+	 * what makes the rotation feel like "lock-on" instead of "snapping
+	 * around the target every frame".
+	 */
+	private Vec3d resolveAimPoint(ClientWorld world, Vec3d eyes, LivingEntity target,
+			ClientPlayerEntity self, double rangeSq, boolean throughWalls) {
+		Box box = target.getBoundingBox();
+		Vec3d center = box.getCenter();
+
+		if (this.cachedAimFor == target && this.cachedAimOffset != null) {
+			Vec3d candidate = new Vec3d(
+				MathHelper.clamp(center.x + cachedAimOffset.x, box.minX, box.maxX),
+				MathHelper.clamp(center.y + cachedAimOffset.y, box.minY, box.maxY),
+				MathHelper.clamp(center.z + cachedAimOffset.z, box.minZ, box.maxZ)
+			);
+			boolean reachable = eyes.squaredDistanceTo(candidate) <= rangeSq
+				&& (throughWalls || RotationUtil.canSee(world, eyes, candidate, self));
+			if (reachable) {
+				return candidate;
+			}
+			// Cached point became occluded or out of range → fall through and
+			// recompute.
+		}
+
+		Vec3d resolved = throughWalls
+			? RotationUtil.closestPointInBox(eyes, box)
+			: RotationUtil.findVisibleAimPoint(world, eyes, target, self, rangeSq);
+		this.cachedAimOffset = resolved.subtract(center);
+		this.cachedAimFor = target;
+		return resolved;
+	}
+
+	// =========================================================================
 	// Attack gating
 	// =========================================================================
 
 	private boolean canAttackNow(ClientPlayerEntity player, Vec3d eyes,
-			Vec3d aimPoint, float[] desiredAim) {
+			Vec3d aimPoint, float[] desiredAim, ClientWorld world, boolean throughWalls) {
 		// Vanilla cooldown gate (use 0.92 safety margin so we don't waste a
 		// click on a 99% cooldown — at 20 tps the next tick is a full hit).
 		if (player.getAttackCooldownProgress(0.0f) < 0.92f) {
@@ -522,6 +596,13 @@ public final class AttackAura extends Module {
 		// Reach gate: the chosen aim point must actually be within range.
 		double rangeLimit = range.get();
 		if (eyes.squaredDistanceTo(aimPoint) > rangeLimit * rangeLimit) {
+			return false;
+		}
+
+		// LOS gate: when "Through walls" is off, never click on an occluded
+		// aim point — even if the rotation looks right, the server will just
+		// reject the hit and we'd waste the cooldown.
+		if (!throughWalls && !RotationUtil.canSee(world, eyes, aimPoint, player)) {
 			return false;
 		}
 
