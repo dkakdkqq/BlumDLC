@@ -6,8 +6,8 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.AttributeModifiersComponent;
+import net.minecraft.component.type.EquippableComponent;
 import net.minecraft.entity.EquipmentSlot;
-import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.attribute.EntityAttributeModifier;
 import net.minecraft.entity.attribute.EntityAttributes;
 import net.minecraft.item.ArmorItem;
@@ -20,7 +20,7 @@ import net.minecraft.screen.slot.SlotActionType;
  * <p>1.21.4 dropped {@code ArmorItem.getProtection()} / {@code getSlotType()}.
  * Protection is now expressed as an {@link AttributeModifiersComponent}
  * targeting the {@link EntityAttributes#ARMOR} attribute, and the target
- * equipment slot is resolved via {@link LivingEntity#getPreferredEquipmentSlot(ItemStack)}.
+ * equipment slot lives on the item's {@link EquippableComponent}.
  */
 public final class AutoArmor extends Module {
 
@@ -50,8 +50,8 @@ public final class AutoArmor extends Module {
 				ItemStack stack = player.getInventory().getStack(i);
 				if (!(stack.getItem() instanceof ArmorItem)) continue;
 
-				EquipmentSlot eq = LivingEntity.getPreferredEquipmentSlot(stack);
-				if (!eq.isArmorSlot()) continue;
+				EquipmentSlot eq = equipmentSlotOf(stack);
+				if (eq == null || !eq.isArmorSlot()) continue;
 				if (eq.getEntitySlotId() != armorSlot) continue;
 
 				double protection = armorValue(stack);
@@ -75,17 +75,28 @@ public final class AutoArmor extends Module {
 	}
 
 	/**
+	 * Returns the equipment slot the item is intended to be worn in,
+	 * or {@code null} if the stack carries no {@link EquippableComponent}.
+	 */
+	private static EquipmentSlot equipmentSlotOf(ItemStack stack) {
+		EquippableComponent equippable = stack.get(DataComponentTypes.EQUIPPABLE);
+		return equippable != null ? equippable.slot() : null;
+	}
+
+	/**
 	 * Sums all {@code ADD_VALUE} modifiers for the {@link EntityAttributes#ARMOR}
 	 * attribute on the given stack, scoped to the slot the item would naturally
 	 * be equipped in. This mirrors what vanilla {@code ArmorItem.getProtection()}
 	 * used to expose pre-1.21.4.
 	 */
 	private static double armorValue(ItemStack stack) {
+		EquipmentSlot slot = equipmentSlotOf(stack);
+		if (slot == null) return 0.0;
+
 		AttributeModifiersComponent comp = stack.getOrDefault(
 			DataComponentTypes.ATTRIBUTE_MODIFIERS,
 			AttributeModifiersComponent.DEFAULT);
 
-		EquipmentSlot slot = LivingEntity.getPreferredEquipmentSlot(stack);
 		final double[] sum = {0.0};
 		comp.applyModifiers(slot, (attribute, modifier) -> {
 			if (attribute == EntityAttributes.ARMOR
