@@ -6,16 +6,7 @@ import java.util.stream.Collectors;
 
 import org.joml.Matrix4f;
 
-import dev.blumdlc.client.modules.impl.AttackAura;
-import dev.blumdlc.client.modules.impl.HudSettings;
-import dev.blumdlc.client.modules.impl.KeybindsHud;
-import dev.blumdlc.client.modules.impl.PotionsHud;
-import dev.blumdlc.client.modules.impl.StaffHud;
-import dev.blumdlc.client.modules.impl.TargetESP;
-import dev.blumdlc.client.modules.impl.TargetHud;
-import dev.blumdlc.client.modules.impl.Themes;
-import dev.blumdlc.client.modules.impl.Trails;
-import dev.blumdlc.client.modules.impl.Watermark;
+import dev.blumdlc.client.modules.impl.*;
 
 public final class ModuleManager {
 
@@ -55,10 +46,6 @@ public final class ModuleManager {
 		}
 	}
 
-	/**
-	 * Per-frame HUD render hook: lets enabled modules draw screen-space
-	 * overlays (e.g. TargetESP) using the project's Builder API.
-	 */
 	public void render(Matrix4f matrix, float tickDelta) {
 		for (Module m : this.modules) {
 			if (m.enabled) {
@@ -68,15 +55,25 @@ public final class ModuleManager {
 	}
 
 	/**
-	 * Registers the modules that actually exist in code today.
-	 * Anything without a real implementation is intentionally not listed here.
+	 * Registers all modules.
 	 */
 	public void registerDefaults() {
-		// Combat
+		// === Combat ===
 		AttackAura aura = new AttackAura();
 		register(aura);
+		register(new Velocity());
+		register(new AutoTotem());
+		register(new Criticals());
+		register(new Reach());
 
-		// Visual
+		// === Movement ===
+		register(new Sprint());
+		register(new Speed());
+		register(new Fly());
+		register(new NoSlow());
+		register(new Eagle());
+
+		// === Render / Visual ===
 		register(new TargetESP(aura));
 		register(new TargetHud(aura));
 		register(new Watermark());
@@ -84,17 +81,30 @@ public final class ModuleManager {
 		register(new PotionsHud());
 		register(new StaffHud());
 		register(new Trails());
+		register(new ESP());
+		register(new FullBright());
+		register(new NameTags());
+		register(new NoRender());
+		register(new Freecam());
 
-		// Visual — HUD toggle panel (must be registered after all HudModules)
+		// === Player ===
+		register(new NoFall());
+		register(new AutoArmor());
+		register(new ChestStealer());
+		register(new AutoHeal());
+		register(new AutoFish());
+		register(new ClickTP());
+
+		// === Util ===
+		register(new Timer());
+		register(new Module("ClickGUI", "Opens this menu", Category.UTIL).defaultOn());
+
+		// === Visual — HUD toggle panel (must be after HudModules) ===
 		HudSettings hudSettings = new HudSettings();
 		register(hudSettings);
 		hudSettings.populate();
 
-		// Util
-		register(new Module("ClickGUI", "Opens this menu", Category.UTIL).defaultOn());
-
-		// Themes — picker for the client accent colour
+		// === Themes ===
 		register(new Themes());
 	}
-
 }
