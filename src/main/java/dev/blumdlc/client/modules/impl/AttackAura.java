@@ -65,6 +65,22 @@ public final class AttackAura extends Module {
 	// Settings
 	// =========================================================================
 
+	/**
+	 * High-level behaviour mode.
+	 * <ul>
+	 *   <li><b>Free</b>: the original behaviour — every tick picks the best
+	 *       target by {@link #priority}, respects the configured {@link #fov}
+	 *       and debounces target swaps with {@link #switchDelayMs}.</li>
+	 *   <li><b>Focused</b>: lock-on. Once a target is acquired we stick with
+	 *       it until it dies or leaves {@code max(range, vision)} — even if
+	 *       a closer/lower-HP target appears. The FOV gate is dropped (full
+	 *       360° tracking), the aim tolerance is tightened so clicks land
+	 *       precisely on the chosen body part, and rotation correction is
+	 *       forced to {@code Targeted} so the camera visibly tracks the
+	 *       victim. This is the "full наводка" mode.</li>
+	 * </ul>
+	 */
+	public final ModeSetting   mode;
 	public final NumberSetting range;
 	public final NumberSetting vision;
 	public final NumberSetting fov;
@@ -73,6 +89,13 @@ public final class AttackAura extends Module {
 	public final NumberSetting cps;
 	public final NumberSetting switchDelayMs;
 	public final NumberSetting aimTolerance;
+	/**
+	 * Forces the aim point to a specific body part instead of the auto-picked
+	 * "closest visible point on hitbox". {@code Auto} keeps the original
+	 * sticky heuristic (closest reachable hitbox point with stickiness across
+	 * ticks); the other options pin the aim to a fixed slice of the hitbox.
+	 */
+	public final ModeSetting   aimPart;
 	public final MultiSetting  targets;
 	public final ModeSetting   movementCorrection;
 	public final MultiSetting  extras;
@@ -107,6 +130,12 @@ public final class AttackAura extends Module {
 	private Vec3d cachedAimOffset;
 	/** Identity guard so the cached offset is invalidated on target swap. */
 	private LivingEntity cachedAimFor;
+	/**
+	 * Aim-part the cached offset was computed for. When the user flips the
+	 * {@link #aimPart} dropdown mid-fight we drop the cache so the next
+	 * tick picks a fresh point matching the new selection.
+	 */
+	private String cachedAimPart;
 
 	private final Random random = new Random();
 
@@ -116,6 +145,8 @@ public final class AttackAura extends Module {
 
 	public AttackAura() {
 		super("AttackAura", "Auto-attacks nearby targets in range", Category.COMBAT);
+
+		this.mode = new ModeSetting("Mode", "Free", "Free", "Focused");
 
 		this.range  = new NumberSetting("Range",  4.5, 3.0, 6.0, 0.05);
 		this.vision = new NumberSetting("Vision", 4.0, 2.5, 6.0, 0.05);
@@ -131,6 +162,9 @@ public final class AttackAura extends Module {
 		this.cps           = new NumberSetting("CPS",                  9.0,   1.0,   20.0,  0.1);
 		this.switchDelayMs = new NumberSetting("Switch delay (ms)",  220.0,   0.0, 1500.0, 10.0);
 		this.aimTolerance  = new NumberSetting("Aim tolerance",        7.0,   1.0,   60.0,  0.5);
+
+		this.aimPart = new ModeSetting("Aim Part", "Auto",
+			"Auto", "Head", "Body", "Legs");
 
 		this.targets = new MultiSetting("Target",
 			List.of("Players", "Animals", "Mobs", "Friends"),
@@ -150,6 +184,19 @@ public final class AttackAura extends Module {
 				"Through walls"
 			));
 
+		// Hide Free-only settings while in Focused mode — Focused locks on
+		// the first valid target ignoring FOV, never auto-switches by
+		// priority, and has no switch debounce, so these knobs would just
+		// be misleading dead weight in the popup.
+		this.priority.visibleWhen(() -> mode.is("Free"));
+		this.switchDelayMs.visibleWhen(() -> mode.is("Free"));
+		this.fov.visibleWhen(() -> mode.is("Free"));
+		// In Focused mode movement correction is forced to "Targeted" so
+		// the camera tracks the victim (the "full lock-on" feel) — hide
+		// the user-facing knob too so the displayed value can't lie.
+		this.movementCorrection.visibleWhen(() -> mode.is("Free"));
+
+		addSetting(this.mode);
 		addSetting(this.range);
 		addSetting(this.vision);
 		addSetting(this.fov);
@@ -158,6 +205,7 @@ public final class AttackAura extends Module {
 		addSetting(this.cps);
 		addSetting(this.switchDelayMs);
 		addSetting(this.aimTolerance);
+		addSetting(this.aimPart);
 		addSetting(this.targets);
 		addSetting(this.movementCorrection);
 		addSetting(this.extras);
@@ -170,6 +218,7 @@ public final class AttackAura extends Module {
 		this.currentAimPoint = null;
 		this.cachedAimOffset = null;
 		this.cachedAimFor = null;
+		this.cachedAimPart = null;
 	}
 
 	// =========================================================================
@@ -235,13 +284,17 @@ public final class AttackAura extends Module {
 
 	private void releaseTarget() {
 		boolean wasRotating = this.rotating;
-		// In "Free" mode the server has been holding our synthetic rotation
-		// since the last LookAndOnGround we sent. Vanilla won't update it
-		// until the user physically moves the mouse — which means that until
-		// they do, manual attacks land at our last fake angle, not at the
+		// In silent-rotation mode (Free + movementCorrection=Free) the server
+		// has been holding our synthetic rotation since the last
+		// LookAndOnGround we sent. Vanilla won't update it until the user
+		// physically moves the mouse — which means that until they do,
+		// manual attacks land at our last fake angle, not at the
 		// crosshair. Send one final rotation packet that snaps the server
 		// back to the player's actual local rotation.
-		if (wasRotating && movementCorrection.is("Free")) {
+		//
+		// In Focused mode we force the rotation to be visible, so this
+		// snap-back is never needed there.
+		if (wasRotating && isSilentRotation()) {
 			MinecraftClient client = MinecraftClient.getInstance();
 			ClientPlayerEntity player = client.player;
 			ClientPlayNetworkHandler net = client.getNetworkHandler();
@@ -256,6 +309,7 @@ public final class AttackAura extends Module {
 		this.currentAimPoint = null;
 		this.cachedAimOffset = null;
 		this.cachedAimFor = null;
+		this.cachedAimPart = null;
 	}
 
 	private void commitTarget(LivingEntity picked) {
@@ -264,7 +318,32 @@ public final class AttackAura extends Module {
 			this.targetLockedAtMs = System.currentTimeMillis();
 			this.cachedAimOffset = null;
 			this.cachedAimFor = null;
+			this.cachedAimPart = null;
 		}
+	}
+
+	/**
+	 * @return {@code true} when synthetic rotations are sent as a
+	 *         rotation-only packet (server sees them, local camera does not).
+	 *         Focused mode forces visible correction, so silent rotations
+	 *         only happen when Mode=Free AND Movement Correction=Free.
+	 */
+	private boolean isSilentRotation() {
+		return mode.is("Free") && movementCorrection.is("Free");
+	}
+
+	/**
+	 * @return the aim-tolerance threshold (degrees) actually used to gate
+	 *         attacks. Focused mode clamps it to a tight ≤4° regardless of
+	 *         the user's slider — combined with the camera lock this gives
+	 *         the "guaranteed headshot" feel the mode is designed for.
+	 */
+	private float effectiveAimTolerance() {
+		float base = aimTolerance.getFloat();
+		if (mode.is("Focused")) {
+			return Math.min(base, 4.0f);
+		}
+		return base;
 	}
 
 	// =========================================================================
@@ -277,10 +356,31 @@ public final class AttackAura extends Module {
 		double rangeSq = range.get() * range.get();
 		double visionSq = vision.get() * vision.get();
 		Vec3d eyes = self.getCameraPosVec(1.0f);
-		float fovDeg = fov.getFloat();
+		boolean focused = mode.is("Focused");
+		// Focused mode is a "lock-on": the FOV gate is ignored once we've
+		// acquired anything. Free mode honours the user's FOV slider.
+		float fovDeg = focused ? 360.0f : fov.getFloat();
 		boolean throughWalls = extras.isSelected("Through walls");
 		long now = System.currentTimeMillis();
 		long switchHoldMs = (long) Math.round(switchDelayMs.get());
+
+		// Focused: try to keep the existing target unconditionally as long as
+		// it's still alive, eligible, and within max reach + visible (or
+		// hidden but within vision). We don't run the priority/score loop —
+		// "lock-on" means the user actively chose this victim and doesn't
+		// want us flipping to a closer one mid-combo.
+		if (focused && this.target != null && this.target.isAlive() && !this.target.isRemoved()
+			&& isAllowedType(this.target)) {
+			double curDistSq = eyes.squaredDistanceTo(this.target.getBoundingBox().getCenter());
+			if (curDistSq <= maxReachSq) {
+				boolean visible = throughWalls || hasLineOfSight(eyes, this.target, world);
+				if ((visible && curDistSq <= rangeSq) || (!visible && curDistSq <= visionSq)) {
+					return this.target;
+				}
+			}
+			// Current focused target became invalid → fall through to acquire
+			// a fresh one below.
+		}
 
 		LivingEntity best = null;
 		double bestScore = Double.POSITIVE_INFINITY;
@@ -316,18 +416,22 @@ public final class AttackAura extends Module {
 				continue;
 			}
 
-			double score = score(living, distSq, self);
+			// In Focused mode we're acquiring a fresh target, so prefer the
+			// one closest to the crosshair (smallest FOV offset) — that's
+			// what the user is most likely "asking" us to lock onto. Free
+			// mode uses the user-configured priority.
+			double score = focused ? fovOffsetDegrees(self, living) : score(living, distSq, self);
 			if (score < bestScore) {
 				bestScore = score;
 				best = living;
 			}
 		}
 
-		// Switch debounce: if we already had a valid target and not enough
-		// time has passed since lock, stick with it (provided it's still
-		// alive and roughly within range). Stops the aura from
-		// ping-ponging between two equally-eligible targets every tick.
-		if (best != null && this.target != null && this.target != best
+		// Switch debounce (Free mode only): if we already had a valid target
+		// and not enough time has passed since lock, stick with it. Stops
+		// the aura from ping-ponging between two equally-eligible targets
+		// every tick. Focused mode handled stickiness above and skips this.
+		if (!focused && best != null && this.target != null && this.target != best
 			&& this.target.isAlive() && !this.target.isRemoved()
 			&& (now - targetLockedAtMs) < switchHoldMs) {
 			double curDistSq = eyes.squaredDistanceTo(this.target.getBoundingBox().getCenter());
@@ -410,20 +514,24 @@ public final class AttackAura extends Module {
 		this.serverPitch = nextPitch;
 		this.rotating = true;
 
-		boolean visible = movementCorrection.is("Targeted");
+		boolean visible = !isSilentRotation();
 		if (visible) {
-			// "Targeted": move the actual player rotation so the camera
-			// follows the target. Vanilla's tick movement packet (sent BEFORE
-			// our onTick callback) already shipped this tick's rotation, so
-			// the new yaw/pitch will be visible to the server next tick.
+			// Visible: move the actual player rotation so the camera follows
+			// the target. Vanilla's tick movement packet (sent BEFORE our
+			// onTick callback) already shipped this tick's rotation, so the
+			// new yaw/pitch will be visible to the server next tick.
+			//
+			// Reached when either Movement Correction == "Targeted" OR Mode
+			// == "Focused" (which forces the camera lock — full наводка).
 			player.setYaw(nextYaw);
 			player.setPitch(nextPitch);
 			player.setHeadYaw(nextYaw);
 			player.setBodyYaw(nextYaw);
 		} else {
-			// "Free": send a rotation-only packet AFTER vanilla's per-tick
-			// movement packet, so the server sees our rotation last while the
-			// local camera stays untouched.
+			// Silent: send a rotation-only packet AFTER vanilla's per-tick
+			// movement packet, so the server sees our rotation last while
+			// the local camera stays untouched. Free mode + Movement
+			// Correction = Free only.
 			ClientPlayNetworkHandler net = MinecraftClient.getInstance().getNetworkHandler();
 			if (net != null) {
 				net.sendPacket(new PlayerMoveC2SPacket.LookAndOnGround(
@@ -523,19 +631,52 @@ public final class AttackAura extends Module {
 	// =========================================================================
 
 	/**
-	 * Pick a hit point inside {@code target}'s bounding box, preferring last
-	 * tick's choice when it's still reachable + visible. Caching the offset
-	 * (rather than the absolute position) means the aim point follows the
-	 * target as it moves while staying glued to the same body part — this is
-	 * what makes the rotation feel like "lock-on" instead of "snapping
+	 * Pick a hit point inside {@code target}'s bounding box.
+	 *
+	 * <p>If {@link #aimPart} is set to a fixed body part (Head / Body /
+	 * Legs) we forge the aim point from a deterministic vertical slice of
+	 * the hitbox, and only fall back to the auto picker when that slice is
+	 * occluded or out of range. Otherwise (Auto) we use the original
+	 * "closest visible point with cross-tick stickiness" heuristic, which
+	 * tracks the target as it moves while staying glued to the same body
+	 * part — so the rotation feels like "lock-on" instead of "snapping
 	 * around the target every frame".
 	 */
 	private Vec3d resolveAimPoint(ClientWorld world, Vec3d eyes, LivingEntity target,
 			ClientPlayerEntity self, double rangeSq, boolean throughWalls) {
 		Box box = target.getBoundingBox();
 		Vec3d center = box.getCenter();
+		String part = aimPart.get();
 
-		if (this.cachedAimFor == target && this.cachedAimOffset != null) {
+		// Drop the cache when the user flips the aim-part dropdown so we
+		// don't keep aiming at the previously cached body part.
+		if (this.cachedAimFor == target && !part.equals(this.cachedAimPart)) {
+			this.cachedAimOffset = null;
+		}
+
+		// Forced body-part aim: build the candidate analytically from the
+		// hitbox geometry (eye height for Head, etc.). When the forced
+		// point is reachable + visible we use it as-is so the lock-on
+		// always points where the user told it to. Otherwise we keep the
+		// pre-existing auto-fallback so attacks still land while the
+		// preferred point is occluded.
+		if (!"Auto".equals(part)) {
+			Vec3d forced = pinnedAimPoint(target, box, center, part);
+			boolean reachable = eyes.squaredDistanceTo(forced) <= rangeSq
+				&& (throughWalls || RotationUtil.canSee(world, eyes, forced, self));
+			if (reachable) {
+				this.cachedAimOffset = forced.subtract(center);
+				this.cachedAimFor = target;
+				this.cachedAimPart = part;
+				return forced;
+			}
+			// Forced point unreachable — fall through to the auto picker
+			// rather than thrashing every tick. Cache is intentionally
+			// left in whatever state the auto path will set below.
+		}
+
+		if (this.cachedAimFor == target && this.cachedAimOffset != null
+			&& "Auto".equals(this.cachedAimPart)) {
 			Vec3d candidate = new Vec3d(
 				MathHelper.clamp(center.x + cachedAimOffset.x, box.minX, box.maxX),
 				MathHelper.clamp(center.y + cachedAimOffset.y, box.minY, box.maxY),
@@ -555,7 +696,22 @@ public final class AttackAura extends Module {
 			: RotationUtil.findVisibleAimPoint(world, eyes, target, self, rangeSq);
 		this.cachedAimOffset = resolved.subtract(center);
 		this.cachedAimFor = target;
+		this.cachedAimPart = "Auto";
 		return resolved;
+	}
+
+	/**
+	 * Build the aim point for a fixed body-part selection. All variants
+	 * stay on the box's centre column (x,z) and only vary the vertical
+	 * coordinate so the rotation is dictated entirely by the user's choice
+	 * of "where on the body".
+	 */
+	private static Vec3d pinnedAimPoint(LivingEntity target, Box box, Vec3d center, String part) {
+		return switch (part) {
+			case "Head" -> new Vec3d(center.x, target.getEyeY(), center.z);
+			case "Legs" -> new Vec3d(center.x, box.minY + 0.30, center.z);
+			default     -> center; // "Body"
+		};
 	}
 
 	// =========================================================================
@@ -585,11 +741,11 @@ public final class AttackAura extends Module {
 		// Aim-aligned gate: the synthetic rotation must actually be looking
 		// at the aim point, otherwise our click would land on whatever the
 		// real camera is pointing at (which is usually nothing useful in
-		// "Free" mode).
+		// "Free" mode). Focused mode uses a tighter tolerance for precision.
 		float curYaw   = this.rotating ? this.serverYaw   : player.getYaw();
 		float curPitch = this.rotating ? this.serverPitch : player.getPitch();
 		float angle = RotationUtil.angleBetween(curYaw, curPitch, desiredAim[0], desiredAim[1]);
-		if (angle > aimTolerance.getFloat()) {
+		if (angle > effectiveAimTolerance()) {
 			return false;
 		}
 
