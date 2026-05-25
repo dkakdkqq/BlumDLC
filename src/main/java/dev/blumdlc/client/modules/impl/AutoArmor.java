@@ -4,12 +4,23 @@ import dev.blumdlc.client.modules.Category;
 import dev.blumdlc.client.modules.Module;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.AttributeModifiersComponent;
+import net.minecraft.entity.EquipmentSlot;
+import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.attribute.EntityAttributeModifier;
+import net.minecraft.entity.attribute.EntityAttributes;
 import net.minecraft.item.ArmorItem;
 import net.minecraft.item.ItemStack;
 import net.minecraft.screen.slot.SlotActionType;
 
 /**
- * AutoArmor — automatically equips the best armor from inventory.
+ * AutoArmor — automatically equips the best armor from the inventory.
+ *
+ * <p>1.21.4 dropped {@code ArmorItem.getProtection()} / {@code getSlotType()}.
+ * Protection is now expressed as an {@link AttributeModifiersComponent}
+ * targeting the {@link EntityAttributes#ARMOR} attribute, and the target
+ * equipment slot is resolved via {@link LivingEntity#getPreferredEquipmentSlot(ItemStack)}.
  */
 public final class AutoArmor extends Module {
 
@@ -32,16 +43,21 @@ public final class AutoArmor extends Module {
 		for (int armorSlot = 0; armorSlot < 4; armorSlot++) {
 			ItemStack current = player.getInventory().getArmorStack(armorSlot);
 			int bestSlot = -1;
-			int bestProtection = current.getItem() instanceof ArmorItem ai
-				? ai.getProtection() : 0;
+			double bestProtection = current.getItem() instanceof ArmorItem
+				? armorValue(current) : 0.0;
 
 			for (int i = 0; i < 36; i++) {
 				ItemStack stack = player.getInventory().getStack(i);
-				if (stack.getItem() instanceof ArmorItem ai) {
-					if (ai.getSlotType().getEntitySlotId() == armorSlot && ai.getProtection() > bestProtection) {
-						bestProtection = ai.getProtection();
-						bestSlot = i;
-					}
+				if (!(stack.getItem() instanceof ArmorItem)) continue;
+
+				EquipmentSlot eq = LivingEntity.getPreferredEquipmentSlot(stack);
+				if (!eq.isArmorSlot()) continue;
+				if (eq.getEntitySlotId() != armorSlot) continue;
+
+				double protection = armorValue(stack);
+				if (protection > bestProtection) {
+					bestProtection = protection;
+					bestSlot = i;
 				}
 			}
 
@@ -56,5 +72,27 @@ public final class AutoArmor extends Module {
 				return;
 			}
 		}
+	}
+
+	/**
+	 * Sums all {@code ADD_VALUE} modifiers for the {@link EntityAttributes#ARMOR}
+	 * attribute on the given stack, scoped to the slot the item would naturally
+	 * be equipped in. This mirrors what vanilla {@code ArmorItem.getProtection()}
+	 * used to expose pre-1.21.4.
+	 */
+	private static double armorValue(ItemStack stack) {
+		AttributeModifiersComponent comp = stack.getOrDefault(
+			DataComponentTypes.ATTRIBUTE_MODIFIERS,
+			AttributeModifiersComponent.DEFAULT);
+
+		EquipmentSlot slot = LivingEntity.getPreferredEquipmentSlot(stack);
+		final double[] sum = {0.0};
+		comp.applyModifiers(slot, (attribute, modifier) -> {
+			if (attribute == EntityAttributes.ARMOR
+				&& modifier.operation() == EntityAttributeModifier.Operation.ADD_VALUE) {
+				sum[0] += modifier.value();
+			}
+		});
+		return sum[0];
 	}
 }
