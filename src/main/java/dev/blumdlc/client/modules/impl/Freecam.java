@@ -55,8 +55,8 @@ public final class Freecam extends Module {
 		double mx = 0, my = 0, mz = 0;
 		if (player.input.movementForward > 0) { mx += look.x; my += look.y; mz += look.z; }
 		if (player.input.movementForward < 0) { mx -= look.x; my -= look.y; mz -= look.z; }
-		if (player.input.jumping) my += spd;
-		if (player.input.sneaking) my -= spd;
+		if (player.input.playerInput.jump()) my += spd;
+		if (player.input.playerInput.sneak()) my -= spd;
 
 		player.setPosition(player.getX() + mx, player.getY() + my, player.getZ() + mz);
 		player.setVelocity(Vec3d.ZERO);

@@ -52,8 +52,8 @@ public final class Fly extends Module {
 				player.getAbilities().flying = true;
 				Vec3d vel = player.getVelocity();
 				double sy = 0;
-				if (player.input.jumping) sy = speed.get() * 0.1;
-				else if (player.input.sneaking) sy = -speed.get() * 0.1;
+				if (player.input.playerInput.jump()) sy = speed.get() * 0.1;
+				else if (player.input.playerInput.sneak()) sy = -speed.get() * 0.1;
 				player.setVelocity(vel.x, sy, vel.z);
 			}
 		}
