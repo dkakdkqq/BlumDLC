@@ -20,13 +20,13 @@ import dev.blumdlc.client.util.KeyName;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.Text;
-import net.minecraft.util.Identifier;
 
 /**
- * DropDown ClickGUI — classic category panels at the top of the screen,
- * each expandable into a vertical list of modules. Click a module to toggle;
- * expand its settings sub-panel with a right-click or arrow. Smooth animations,
- * blur backdrop, accent-coloured headers.
+ * DropDown ClickGUI — five fixed category panels arranged in a row at the
+ * top of the screen. Panels are statically positioned (centered as a group
+ * across the screen width) and cannot be moved or collapsed. Click a module
+ * to toggle; right-click a module to open its settings sub-panel; middle-
+ * click to start a key bind.
  */
 public final class ClickGuiScreen extends Screen {
 
@@ -42,11 +42,6 @@ public final class ClickGuiScreen extends Screen {
 	private static final float GAP           = 3.0f;
 	private static final float PANEL_GAP     = 4.0f;
 
-	/** Official Bloom logo — bundled in resources. */
-	private static final Identifier LOGO_TEX =
-		Identifier.of("blumdlc", "textures/logo/logo.png");
-	private static final String     BRAND    = "Bloom";
-
 	// =========================================================================
 	//  Category panels
 	// =========================================================================
@@ -59,10 +54,6 @@ public final class ClickGuiScreen extends Screen {
 	private final List<Panel> panels = new ArrayList<>();
 	private final Animation openAnim = new Animation(0.0f, 280, Easing.EASE_OUT_QUINT);
 
-	// Dragging
-	private Panel dragPanel = null;
-	private float dragOffX, dragOffY;
-
 	// =========================================================================
 	//  Lifecycle
 	// =========================================================================
@@ -74,11 +65,22 @@ public final class ClickGuiScreen extends Screen {
 	@Override
 	protected void init() {
 		super.init();
+		// Re-anchor panels every time init() runs (window resize / scale change)
+		// so the row stays centred.
+		float totalW = CATEGORIES.length * PANEL_W + (CATEGORIES.length - 1) * PANEL_GAP;
+		float startX = Math.max(4.0f, (this.width - totalW) * 0.5f);
+		float y = 10.0f;
+
 		if (panels.isEmpty()) {
-			float startX = 10.0f;
 			for (Category cat : CATEGORIES) {
-				Panel p = new Panel(cat, startX, 10.0f);
-				panels.add(p);
+				panels.add(new Panel(cat, startX, y));
+				startX += PANEL_W + PANEL_GAP;
+			}
+		} else {
+			// Existing panels: just relocate them to the freshly-computed row.
+			for (Panel p : panels) {
+				p.x = startX;
+				p.y = y;
 				startX += PANEL_W + PANEL_GAP;
 			}
 		}
@@ -117,69 +119,7 @@ public final class ClickGuiScreen extends Screen {
 			panel.render(m, font, mouseX, mouseY, open, delta);
 		}
 
-		// Centred branding badge at the bottom — logo + "Bloom" wordmark.
-		drawBrandBadge(m, font, open);
-
 		super.render(context, mouseX, mouseY, delta);
-	}
-
-	/**
-	 * Floating logo + wordmark badge anchored to the bottom-centre of the
-	 * screen. Mirrors the Watermark HUD style at a smaller scale so the
-	 * GUI always shows the official Bloom branding regardless of which
-	 * panels are open.
-	 */
-	private void drawBrandBadge(Matrix4f m, MsdfFont font, float open) {
-		if (open < 0.01f) return;
-
-		float fontSize = 11.0f;
-		float padX = 12.0f;
-		float padY = 7.0f;
-		float gap  = 6.0f;
-		float logoSize = fontSize + 3.0f;
-
-		float textW = UIRender.textWidth(font, BRAND, fontSize);
-		float w = padX + logoSize + gap + textW + padX;
-		float h = fontSize + padY * 2.0f;
-
-		float bx = (this.width - w) * 0.5f;
-		float by = this.height - h - 12.0f;
-
-		// Subtle accent halo behind the badge.
-		int accent = ClientTheme.accent();
-		UIRender.rect(m, bx - 5.0f, by - 4.0f, w + 10.0f, h + 8.0f, 12.0f,
-			ColorUtil.withAlpha(accent, 0.18f * open));
-
-		// Frosted glass background.
-		UIRender.blur(m, bx, by, w, h, 8.0f, 12.0f,
-			ColorUtil.withAlpha(0x000D1117, 0.55f * open));
-		UIRender.rectGradientV(m, bx, by, w, h, 8.0f,
-			ColorUtil.withAlpha(0x0D1117, 0.85f * open),
-			ColorUtil.withAlpha(0x070A12, 0.92f * open));
-		UIRender.border(m, bx, by, w, h, 8.0f, 0.9f,
-			ColorUtil.withAlpha(accent, 0.55f * open));
-
-		// Bottom accent line (uses theme gradient).
-		UIRender.rectGradientH(m, bx + 6.0f, by + h - 1.6f, w - 12.0f, 1.6f, 0.8f,
-			ColorUtil.withAlpha(ClientTheme.from(), 0.85f * open),
-			ColorUtil.withAlpha(ClientTheme.to(),   0.85f * open));
-
-		// Logo — render with full alpha (the panel alpha already comes from open).
-		float logoX = bx + padX;
-		float logoY = by + (h - logoSize) * 0.5f;
-		UIRender.texture(m, LOGO_TEX,
-			logoX, logoY, logoSize, logoSize,
-			ColorUtil.withAlpha(0xFFFFFF, open));
-
-		// "Bloom" text — gradient-tinted toward white for crispness.
-		float tx = logoX + logoSize + gap;
-		float ty = by + padY;
-		int textColor = ColorUtil.lerp(ClientTheme.from(), ClientTheme.to(), 0.4f);
-		textColor = ColorUtil.lerp(textColor, 0xFFFFFFFF, 0.3f);
-		UIRender.text(m, font, BRAND, tx + 0.4f, ty + 0.6f, fontSize,
-			ColorUtil.withAlpha(0x000000, 0.5f * open), 0.06f);
-		UIRender.text(m, font, BRAND, tx, ty, fontSize,
-			ColorUtil.withAlpha(textColor, open), 0.07f);
 	}
 
 	// =========================================================================
@@ -195,42 +135,13 @@ public final class ClickGuiScreen extends Screen {
 				return true;
 			}
 		}
-
-		// Header drag detection
-		for (int i = panels.size() - 1; i >= 0; i--) {
-			Panel p = panels.get(i);
-			if (mx >= p.x && mx <= p.x + PANEL_W && my >= p.y && my <= p.y + HEADER_H) {
-				if (button == 0) {
-					dragPanel = p;
-					dragOffX = (float) mx - p.x;
-					dragOffY = (float) my - p.y;
-					return true;
-				}
-				if (button == 1) {
-					p.expanded = !p.expanded;
-					p.expandAnim.setTarget(p.expanded ? 1.0f : 0.0f);
-					return true;
-				}
-			}
-		}
 		return super.mouseClicked(mx, my, button);
 	}
 
 	@Override
 	public boolean mouseReleased(double mx, double my, int button) {
-		if (button == 0) dragPanel = null;
 		for (Panel p : panels) p.mouseReleased(mx, my, button);
 		return super.mouseReleased(mx, my, button);
-	}
-
-	@Override
-	public boolean mouseDragged(double mx, double my, int button, double dx, double dy) {
-		if (dragPanel != null && button == 0) {
-			dragPanel.x = (float) mx - dragOffX;
-			dragPanel.y = (float) my - dragOffY;
-			return true;
-		}
-		return super.mouseDragged(mx, my, button, dx, dy);
 	}
 
 	@Override
@@ -299,11 +210,6 @@ public final class ClickGuiScreen extends Screen {
 			float tw = UIRender.textWidth(font, name, 8.0f);
 			UIRender.text(m, font, name, x + (PANEL_W - tw) * 0.5f, y + 5.0f, 8.0f,
 				ColorUtil.withAlpha(0xFFFFFF, 0.95f * alpha), 0.07f);
-
-			// Expand indicator
-			String arrow = expanded ? "v" : ">";
-			UIRender.text(m, font, arrow, x + PANEL_W - 12.0f, y + 5.5f, 6.5f,
-				ColorUtil.withAlpha(0xFFFFFF, 0.6f * alpha), 0.05f);
 
 			if (expandT < 0.01f) return;
 
