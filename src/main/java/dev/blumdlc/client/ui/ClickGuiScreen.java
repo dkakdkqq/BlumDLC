@@ -28,36 +28,35 @@ import net.minecraft.text.Text;
 
 /**
  * DropDown ClickGUI — five fixed category panels arranged in a row at the
- * top of the screen. Panels are statically positioned (centered as a group)
- * and cannot be moved or collapsed.
+ * top of the screen.
+ *
+ * <p><b>Animations</b> drive every visible state change so nothing pops
+ * abruptly:
+ * <ul>
+ *   <li>{@code openAnim} — root fade-in/out for the whole GUI;</li>
+ *   <li>per-module {@code toggleAnim} — accent bar + tint when a module
+ *       turns on/off;</li>
+ *   <li>per-module {@code hoverAnim} — soft hover highlight that follows
+ *       the mouse with a small lag;</li>
+ *   <li>per-module {@code settingsAnim} — fold-in of the inline settings
+ *       sub-panel (settings rendering is clipped to the animated height,
+ *       so they can't bleed into the next module row);</li>
+ *   <li>per-panel {@code scrollAnim} — wheel scrolling glides instead of
+ *       jumping, and the value is clamped between zero and the max scroll
+ *       implied by the body height;</li>
+ *   <li>{@code dropdownAnim} — overlay drop-down lists fade + slide in,
+ *       and reverse-animate when closing.</li>
+ * </ul>
  *
  * <p><b>Interaction model</b>:
  * <ul>
  *   <li>Left-click a module row to toggle it.</li>
  *   <li>Right-click a module row to expand its inline settings sub-panel.</li>
- *   <li>Middle-click a module row to start a key bind (any subsequent key
- *       press becomes its keybind; ESC clears the bind).</li>
- *   <li>Inside a settings sub-panel:
- *       <ul>
- *         <li>{@link BooleanSetting} → click the box to toggle. The box
- *             shows a vector ✓ when on, empty when off — never an "x".</li>
- *         <li>{@link NumberSetting} → click+drag the slider to scrub.</li>
- *         <li>{@link ModeSetting} → click the trigger row to open a
- *             dropdown listing all modes. Click a mode to apply, click
- *             outside or the trigger again to close.</li>
- *         <li>{@link MultiSetting} → click the trigger row to open a
- *             multi-select dropdown with checkboxes per option. The
- *             dropdown stays open while the user toggles options.</li>
- *         <li>{@link ColorSetting} → click cycles hue +30°, right-click −30°.</li>
- *       </ul>
- *   </li>
+ *   <li>Middle-click a module row to start a key bind.</li>
+ *   <li>Inside a settings sub-panel: boolean → click box; number →
+ *       click+drag slider; mode/multi → click trigger to open dropdown;
+ *       color → click ±30° hue.</li>
  * </ul>
- *
- * <p><b>Dropdown overlay</b>: the dropdown list is rendered AFTER all panels
- * in {@link #render(DrawContext, int, int, float)} so it can float above
- * sibling panels (or even off-screen edges, though it auto-flips if there
- * is no room below the trigger). Hit-testing in {@link #mouseClicked} also
- * happens before panel hit-testing for the same reason.
  */
 public final class ClickGuiScreen extends Screen {
 
@@ -73,6 +72,11 @@ public final class ClickGuiScreen extends Screen {
 	private static final float GAP           = 3.0f;
 	private static final float PANEL_GAP     = 4.0f;
 	private static final float DROPDOWN_ROW_H = 12.0f;
+	/** Soft cap on body height so panels don't run off-screen on small res. */
+	private static final float BODY_MAX_H    = 320.0f;
+
+	/** Wheel sensitivity; one notch ≈ this many pixels of scroll target. */
+	private static final float SCROLL_STEP   = 18.0f;
 
 	// =========================================================================
 	//  Category panels
@@ -90,8 +94,15 @@ public final class ClickGuiScreen extends Screen {
 	 * Currently-open dropdown overlay (single- or multi-select), or
 	 * {@code null} when none. Dropdowns live at the screen level so the
 	 * list rect can float above sibling panels.
+	 *
+	 * <p>The overlay's open/close progress is on {@link #dropdownAnim};
+	 * even after {@link #openDropdown} is nulled, the animation may still
+	 * be playing the close phase (we keep a {@code closingDropdown}
+	 * reference so the overlay can fade out gracefully).
 	 */
 	private OpenDropdown openDropdown;
+	private OpenDropdown closingDropdown;
+	private final Animation dropdownAnim = new Animation(0.0f, 200, Easing.EASE_OUT_QUART);
 
 	/**
 	 * Set every frame by {@link Panel#renderSetting} when it draws the
@@ -151,7 +162,8 @@ public final class ClickGuiScreen extends Screen {
 		MsdfFont font = Fonts.BIKO.get();
 		float open = openAnim.getValue();
 
-		// Dim backdrop
+		// Dim backdrop — the alpha follows the root open animation so the
+		// world fades in/out smoothly when the GUI shows or hides.
 		UIRender.rect(m, 0, 0, this.width, this.height, 0,
 			ColorUtil.withAlpha(0x000000, 0.45f * open));
 
@@ -163,79 +175,106 @@ public final class ClickGuiScreen extends Screen {
 			panel.render(m, font, mouseX, mouseY, open);
 		}
 
-		// Auto-close dropdown if its trigger was not visible this frame.
+		// Auto-close dropdown if its trigger was not visible this frame —
+		// the overlay fades out via the close animation, never just pops.
 		if (openDropdown != null && !sawOpenDropdownThisFrame) {
-			openDropdown = null;
+			beginDropdownClose();
 		}
 
-		// Pass 2: render the dropdown overlay so it floats above sibling panels.
-		if (openDropdown != null) {
-			renderDropdownOverlay(m, font, open, mouseX, mouseY);
+		// Pass 2: render the dropdown overlay so it floats above sibling
+		// panels. We render either the active dropdown (opening/open) or
+		// the lingering one that's animating closed.
+		float dropProgress = dropdownAnim.getValue();
+		OpenDropdown overlay = openDropdown != null ? openDropdown : closingDropdown;
+		if (overlay != null && dropProgress > 0.001f) {
+			renderDropdownOverlay(m, font, open * dropProgress, dropProgress, overlay,
+				mouseX, mouseY);
+		} else if (closingDropdown != null && dropProgress <= 0.001f) {
+			closingDropdown = null;
 		}
 
 		super.render(context, mouseX, mouseY, delta);
 	}
 
-	private void renderDropdownOverlay(Matrix4f m, MsdfFont font, float open,
-			int mouseX, int mouseY) {
-		float tx = openDropdown.triggerX;
-		float ty = openDropdown.triggerY;
-		float tw = openDropdown.triggerW;
-		float th = openDropdown.triggerH;
+	private void renderDropdownOverlay(Matrix4f m, MsdfFont font, float overlayAlpha,
+			float progress, OpenDropdown dd, int mouseX, int mouseY) {
+		float tx = dd.triggerX;
+		float ty = dd.triggerY;
+		float tw = dd.triggerW;
+		float th = dd.triggerH;
 
-		int n = openDropdown.rowCount();
+		int n = dd.rowCount();
 		if (n == 0) {
 			return;
 		}
 
 		float listH = n * DROPDOWN_ROW_H + 2.0f;
-		float ly;
-		float yBelow = ty + th + 2.0f;
-		if (yBelow + listH <= this.height - 4.0f) {
-			ly = yBelow;
-		} else {
-			ly = Math.max(4.0f, ty - 2.0f - listH);
+
+		// Place the list below the trigger, or flip above when the panel
+		// would clip. The flip decision is made once and cached for the
+		// life of the dropdown so the overlay doesn't jitter mid-animation.
+		if (!dd.placementResolved) {
+			float yBelow = ty + th + 2.0f;
+			dd.flipAbove = (yBelow + listH > this.height - 4.0f);
+			dd.placementResolved = true;
 		}
+		float ly = dd.flipAbove
+			? Math.max(4.0f, ty - 2.0f - listH)
+			: ty + th + 2.0f;
 		float lx = tx;
 		float lw = tw;
 
-		// Stash for click hit-testing
-		openDropdown.listX = lx;
-		openDropdown.listY = ly;
-		openDropdown.listW = lw;
-		openDropdown.listH = listH;
+		// Slide-in: 6px above the resting position when collapsed, easing
+		// down to its final spot. Direction inverts when flipped above.
+		float slideOffset = (1.0f - progress) * 6.0f * (dd.flipAbove ? +1.0f : -1.0f);
+		ly += slideOffset;
 
-		// Drop shadow + body + accent border
+		// Stash for click hit-testing (use the *resting* rect so a click on
+		// the visible rendered list still registers even mid-animation).
+		dd.listX = lx;
+		dd.listY = dd.flipAbove
+			? Math.max(4.0f, ty - 2.0f - listH)
+			: ty + th + 2.0f;
+		dd.listW = lw;
+		dd.listH = listH;
+
+		// Drop shadow + body + accent border. Alpha follows overlayAlpha so
+		// the entire list fades cleanly with progress.
 		UIRender.rect(m, lx + 1.0f, ly + 2.0f, lw, listH, 4.0f,
-			ColorUtil.withAlpha(0x000000, 0.45f * open));
+			ColorUtil.withAlpha(0x000000, 0.45f * overlayAlpha));
 		UIRender.rectGradientV(m, lx, ly, lw, listH, 4.0f,
-			ColorUtil.withAlpha(0x141828, 0.95f * open),
-			ColorUtil.withAlpha(0x080B14, 0.95f * open));
+			ColorUtil.withAlpha(0x141828, 0.95f * overlayAlpha),
+			ColorUtil.withAlpha(0x080B14, 0.95f * overlayAlpha));
 		UIRender.border(m, lx, ly, lw, listH, 4.0f, 1.0f,
-			ColorUtil.withAlpha(ClientTheme.accent(), 0.8f * open));
+			ColorUtil.withAlpha(ClientTheme.accent(), 0.8f * overlayAlpha));
 
-		boolean multi = openDropdown.isMulti();
+		boolean multi = dd.isMulti();
 		float cy = ly + 1.0f;
 		for (int i = 0; i < n; i++) {
-			boolean selected = openDropdown.selected(i);
+			boolean selected = dd.selected(i);
 			boolean hovered = mouseX >= lx && mouseX <= lx + lw
-				&& mouseY >= cy && mouseY <= cy + DROPDOWN_ROW_H;
+				&& mouseY >= cy && mouseY <= cy + DROPDOWN_ROW_H
+				&& progress > 0.4f; // suppress hover during early fade-in
+			Animation rowHover = dd.rowHoverAnim(i);
+			rowHover.setTarget(hovered ? 1.0f : 0.0f);
+			float hoverT = rowHover.getValue();
 
 			if (!multi && selected) {
 				UIRender.rectGradientH(m, lx + 1.5f, cy, lw - 3.0f, DROPDOWN_ROW_H, 2.5f,
-					ColorUtil.withAlpha(ClientTheme.from(), 0.6f * open),
-					ColorUtil.withAlpha(ClientTheme.to(),   0.6f * open));
-			} else if (hovered) {
+					ColorUtil.withAlpha(ClientTheme.from(), 0.6f * overlayAlpha),
+					ColorUtil.withAlpha(ClientTheme.to(),   0.6f * overlayAlpha));
+			}
+			if (hoverT > 0.01f) {
 				UIRender.rect(m, lx + 1.5f, cy, lw - 3.0f, DROPDOWN_ROW_H, 2.5f,
-					ColorUtil.withAlpha(0xFFFFFF, 0.08f * open));
+					ColorUtil.withAlpha(0xFFFFFF, 0.10f * hoverT * overlayAlpha));
 			}
 
 			int textColor = (!multi && selected)
-				? ColorUtil.withAlpha(0xFFFFFFFF, open)
-				: ColorUtil.withAlpha(0xFFCCCCD0, open);
+				? ColorUtil.withAlpha(0xFFFFFFFF, overlayAlpha)
+				: ColorUtil.withAlpha(0xFFCCCCD0, overlayAlpha);
 
 			float labelMaxW = lw - 8.0f - (multi ? 12.0f : 0.0f);
-			String label = UIRender.ellipsize(font, openDropdown.label(i), 6.5f, labelMaxW);
+			String label = UIRender.ellipsize(font, dd.label(i), 6.5f, labelMaxW);
 			UIRender.text(m, font, label, lx + 5.0f, cy + 3.0f, 6.5f, textColor, 0.05f);
 
 			if (multi) {
@@ -243,19 +282,36 @@ public final class ClickGuiScreen extends Screen {
 				float bx = lx + lw - bxW - 4.0f;
 				float by = cy + (DROPDOWN_ROW_H - bxH) * 0.5f;
 				int boxBg = selected
-					? ColorUtil.withAlpha(ClientTheme.accent(), 0.85f * open)
-					: ColorUtil.withAlpha(0x222530, 0.85f * open);
+					? ColorUtil.withAlpha(ClientTheme.accent(), 0.85f * overlayAlpha)
+					: ColorUtil.withAlpha(0x222530, 0.85f * overlayAlpha);
 				UIRender.rect(m, bx, by, bxW, bxH, 1.5f, boxBg);
 				UIRender.border(m, bx, by, bxW, bxH, 1.5f, 0.6f,
-					ColorUtil.withAlpha(0xFFFFFF, 0.30f * open));
+					ColorUtil.withAlpha(0xFFFFFF, 0.30f * overlayAlpha));
 				if (selected) {
 					UIRender.checkmark(m, bx + 0.5f, by + 0.5f, bxW - 1.0f,
-						ColorUtil.withAlpha(0xFFFFFF, open));
+						ColorUtil.withAlpha(0xFFFFFF, overlayAlpha));
 				}
 			}
 
 			cy += DROPDOWN_ROW_H;
 		}
+	}
+
+	private void beginDropdownClose() {
+		if (openDropdown != null) {
+			closingDropdown = openDropdown;
+			openDropdown = null;
+			dropdownAnim.setTarget(0.0f);
+		}
+	}
+
+	private void beginDropdownOpen(OpenDropdown dd) {
+		// If a different dropdown is fading out, drop it instantly so the
+		// new one isn't blocked behind a stale ghost.
+		closingDropdown = null;
+		openDropdown = dd;
+		dropdownAnim.setImmediate(0.0f);
+		dropdownAnim.setTarget(1.0f);
 	}
 
 	// =========================================================================
@@ -265,6 +321,8 @@ public final class ClickGuiScreen extends Screen {
 	@Override
 	public boolean mouseClicked(double mx, double my, int button) {
 		// 1. Dropdown overlay takes priority — its rect floats above panels.
+		//    Only the *currently open* dropdown is interactive; a fading-out
+		//    closingDropdown ignores clicks so the user can't double-pick.
 		if (openDropdown != null) {
 			if (mx >= openDropdown.listX && mx <= openDropdown.listX + openDropdown.listW
 				&& my >= openDropdown.listY && my <= openDropdown.listY + openDropdown.listH) {
@@ -274,7 +332,7 @@ public final class ClickGuiScreen extends Screen {
 						openDropdown.clickRow(idx);
 					}
 					if (!openDropdown.isMulti()) {
-						openDropdown = null;
+						beginDropdownClose();
 					}
 				}
 				return true;
@@ -282,12 +340,12 @@ public final class ClickGuiScreen extends Screen {
 			// Click on the trigger again → close (toggle).
 			if (mx >= openDropdown.triggerX && mx <= openDropdown.triggerX + openDropdown.triggerW
 				&& my >= openDropdown.triggerY && my <= openDropdown.triggerY + openDropdown.triggerH) {
-				openDropdown = null;
+				beginDropdownClose();
 				return true;
 			}
 			// Click anywhere else: close, then keep going so the click can
 			// still hit a different control underneath in the same gesture.
-			openDropdown = null;
+			beginDropdownClose();
 		}
 
 		// 2. Process panels in reverse (top-most first).
@@ -318,16 +376,17 @@ public final class ClickGuiScreen extends Screen {
 
 	@Override
 	public boolean mouseScrolled(double mx, double my, double horiz, double vert) {
-		// Scroll inside the open dropdown's list scrolls only the list.
+		// Scroll inside the open dropdown's list scrolls only the list (no
+		// inner scroll yet, but consume the event so the panel underneath
+		// doesn't scroll too).
 		if (openDropdown != null
 			&& mx >= openDropdown.listX && mx <= openDropdown.listX + openDropdown.listW
 			&& my >= openDropdown.listY && my <= openDropdown.listY + openDropdown.listH) {
-			return true; // consume; lists are short, no internal scrolling yet
+			return true;
 		}
 		for (Panel p : panels) {
 			if (mx >= p.x && mx <= p.x + PANEL_W) {
-				p.scroll -= (float) vert * 14.0f;
-				if (p.scroll < 0) p.scroll = 0;
+				p.scrollBy(-(float) vert * SCROLL_STEP);
 				return true;
 			}
 		}
@@ -337,7 +396,7 @@ public final class ClickGuiScreen extends Screen {
 	@Override
 	public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
 		if (openDropdown != null && keyCode == 256) { // ESC closes the dropdown first
-			openDropdown = null;
+			beginDropdownClose();
 			return true;
 		}
 		for (Panel p : panels) {
@@ -355,6 +414,12 @@ public final class ClickGuiScreen extends Screen {
 		final MultiSetting multiSetting;   // null if mode
 		float triggerX, triggerY, triggerW, triggerH;
 		float listX, listY, listW, listH;
+		/** Resolved on first render; fixed for the rest of the dropdown's life. */
+		boolean placementResolved;
+		boolean flipAbove;
+
+		/** Per-row hover animations, lazily allocated. */
+		private final Map<Integer, Animation> rowHovers = new HashMap<>();
 
 		OpenDropdown(ModeSetting m, float tx, float ty, float tw, float th) {
 			this.modeSetting = m;
@@ -375,10 +440,6 @@ public final class ClickGuiScreen extends Screen {
 
 		boolean isMulti() {
 			return multiSetting != null;
-		}
-
-		Object setting() {
-			return modeSetting != null ? modeSetting : multiSetting;
 		}
 
 		int rowCount() {
@@ -406,6 +467,15 @@ public final class ClickGuiScreen extends Screen {
 				multiSetting.toggle(multiSetting.options.get(i));
 			}
 		}
+
+		Animation rowHoverAnim(int i) {
+			Animation a = rowHovers.get(i);
+			if (a == null) {
+				a = new Animation(0.0f, 140, Easing.EASE_OUT_QUART);
+				rowHovers.put(i, a);
+			}
+			return a;
+		}
 	}
 
 	// =========================================================================
@@ -415,9 +485,14 @@ public final class ClickGuiScreen extends Screen {
 	private final class Panel {
 		final Category category;
 		float x, y;
-		float scroll = 0;
+
+		/** Smoothed scroll position. {@link #scrollTarget} is the wheel sink. */
+		float scrollTarget = 0.0f;
+		final Animation scrollAnim = new Animation(0.0f, 220, Easing.EASE_OUT_QUART);
+
 		final Map<Module, Animation> moduleAnims = new HashMap<>();
-		final Map<Module, Boolean> settingsOpen = new HashMap<>();
+		final Map<Module, Animation> hoverAnims  = new HashMap<>();
+		final Map<Module, Boolean>   settingsOpen = new HashMap<>();
 		final Map<Module, Animation> settingsAnims = new HashMap<>();
 		Module bindingModule = null;
 
@@ -436,9 +511,47 @@ public final class ClickGuiScreen extends Screen {
 			return BlumDLC.MODULES.byCategory(category);
 		}
 
+		// ---- Scroll handling ----------------------------------------------
+
+		/** Increment the user-facing scroll target, clamping to content. */
+		void scrollBy(float delta) {
+			scrollTarget = clampScroll(scrollTarget + delta);
+			scrollAnim.setTarget(scrollTarget);
+		}
+
+		/** Re-clamp the existing target whenever content height shrinks. */
+		float clampScroll(float v) {
+			float maxScroll = maxScrollFor(getModules());
+			if (v < 0.0f) return 0.0f;
+			if (v > maxScroll) return maxScroll;
+			return v;
+		}
+
+		float maxScrollFor(List<Module> modules) {
+			float bodyH = computeBodyHeight(modules);
+			float content = rawContentHeight(modules);
+			return Math.max(0.0f, content - bodyH);
+		}
+
+		float rawContentHeight(List<Module> modules) {
+			float h = 4.0f;
+			for (Module mod : modules) {
+				h += MODULE_H + GAP + settingsHeight(mod);
+			}
+			return h;
+		}
+
+		// ---- Render -------------------------------------------------------
+
 		void render(Matrix4f m, MsdfFont font, int mx, int my, float open) {
 			float alpha = open;
 			List<Module> modules = getModules();
+
+			// Re-clamp the target every frame so settings panels closing /
+			// opening can't leave the scroll past the new content end.
+			scrollTarget = clampScroll(scrollTarget);
+			scrollAnim.setTarget(scrollTarget);
+			float scroll = scrollAnim.getValue();
 
 			// Header — gradient with category name centred.
 			int hFrom = ColorUtil.withAlpha(ClientTheme.from(), 0.92f * alpha);
@@ -473,24 +586,29 @@ public final class ClickGuiScreen extends Screen {
 				}
 
 				Animation togA = moduleAnims.computeIfAbsent(mod,
-					k -> new Animation(mod.enabled ? 1.0f : 0.0f, 180, Easing.EASE_OUT_CUBIC));
+					k -> new Animation(mod.enabled ? 1.0f : 0.0f, 200, Easing.EASE_OUT_QUART));
 				togA.setTarget(mod.enabled ? 1.0f : 0.0f);
 				float togT = togA.getValue();
 
 				boolean hovered = mx >= x + 2 && mx <= x + PANEL_W - 2
 					&& my >= ry && my <= ry + MODULE_H
 					&& my >= bodyY && my <= bodyY + bodyH;
+				Animation hovA = hoverAnims.computeIfAbsent(mod,
+					k -> new Animation(0.0f, 140, Easing.EASE_OUT_QUART));
+				hovA.setTarget(hovered ? 1.0f : 0.0f);
+				float hovT = hovA.getValue();
 
-				// Active highlight + accent bar.
+				// Active highlight + accent bar — both ride the toggle anim,
+				// so flipping the module on swells the bar and tints the row.
 				if (togT > 0.01f) {
 					UIRender.rect(m, x + 2, ry, PANEL_W - 4, MODULE_H, 3.0f,
 						ColorUtil.withAlpha(ClientTheme.accent(), 0.25f * togT * alpha));
 					UIRender.rect(m, x + 2, ry + 2, 1.5f, MODULE_H - 4, 0.75f,
 						ColorUtil.withAlpha(ClientTheme.accent(), 0.85f * togT * alpha));
 				}
-				if (hovered) {
+				if (hovT > 0.01f) {
 					UIRender.rect(m, x + 2, ry, PANEL_W - 4, MODULE_H, 3.0f,
-						ColorUtil.withAlpha(0xFFFFFF, 0.06f * alpha));
+						ColorUtil.withAlpha(0xFFFFFF, 0.07f * hovT * alpha));
 				}
 
 				int nameColor = togT > 0.5f
@@ -511,24 +629,36 @@ public final class ClickGuiScreen extends Screen {
 
 				ry += MODULE_H;
 
-				// Inline settings sub-panel.
+				// Inline settings sub-panel — clipped to the animated height
+				// so partially-open panels can't bleed into the next module
+				// row below.
 				boolean sOpen = settingsOpen.getOrDefault(mod, false);
 				Animation sA = settingsAnims.computeIfAbsent(mod,
-					k -> new Animation(0.0f, 200, Easing.EASE_OUT_CUBIC));
+					k -> new Animation(0.0f, 220, Easing.EASE_OUT_QUART));
 				sA.setTarget(sOpen ? 1.0f : 0.0f);
 				float sT = sA.getValue();
 
 				if (sT > 0.01f && !mod.settings.isEmpty()) {
-					float sH = settingsContentHeight(mod) * sT;
+					float fullH = settingsContentHeight(mod);
+					float sH = fullH * sT;
 					UIRender.rect(m, x + 4, ry, PANEL_W - 8, sH, 2.0f,
 						ColorUtil.withAlpha(0x000000, 0.30f * alpha));
 
-					float sy = ry + 1.0f;
+					float panelStart = ry + 1.0f;
+					float panelEnd   = ry + sH;
+					float sy = panelStart;
 					for (Setting<?> setting : mod.settings) {
 						if (setting.getVisibility() != null && !setting.getVisibility().get())
 							continue;
+						// Stop before any setting that would land outside
+						// the visible animated rect; a partially-rendered
+						// setting at the end of the fold-in would just
+						// overflow into the row below.
+						if (sy + SETTING_H - 1.0f > panelEnd) {
+							break;
+						}
 						sy = renderSetting(m, font, setting, x + 6, sy, PANEL_W - 12,
-							alpha, mx, my);
+							alpha * sT, mx, my);
 					}
 					ry += sH + 1.0f;
 				}
@@ -554,11 +684,7 @@ public final class ClickGuiScreen extends Screen {
 		}
 
 		float computeBodyHeight(List<Module> modules) {
-			float h = 4.0f;
-			for (Module mod : modules) {
-				h += MODULE_H + GAP + settingsHeight(mod);
-			}
-			return Math.min(h, 320.0f);
+			return Math.min(rawContentHeight(modules), BODY_MAX_H);
 		}
 
 		float renderSetting(Matrix4f m, MsdfFont font, Setting<?> s,
@@ -582,7 +708,6 @@ public final class ClickGuiScreen extends Screen {
 					: ColorUtil.withAlpha(0xFF555560, alpha);
 				UIRender.rect(m, bx, by, bxW, bxH, 2.0f, boxBg);
 				UIRender.border(m, bx, by, bxW, bxH, 2.0f, 0.7f, boxBorder);
-				// Vector ✓ when on; nothing (not even an "x") when off.
 				if (on) {
 					UIRender.checkmark(m, bx + 0.5f, by + 0.5f, bxW - 1.0f,
 						ColorUtil.withAlpha(0xFFFFFFFF, alpha));
@@ -656,10 +781,9 @@ public final class ClickGuiScreen extends Screen {
 
 		/**
 		 * Shared chrome for {@link ModeSetting} and {@link MultiSetting}
-		 * dropdown trigger rows: pill background, "Name: Value" label, caret
-		 * on the right. Also writes back the trigger's screen-space rect into
-		 * {@link ClickGuiScreen#openDropdown} so the overlay tracks it as the
-		 * panel scrolls or the GUI re-anchors.
+		 * dropdown trigger rows. Also writes back the trigger's screen-space
+		 * rect into {@link ClickGuiScreen#openDropdown} so the overlay tracks
+		 * it as the panel scrolls or the GUI re-anchors.
 		 */
 		void renderDropdownTrigger(Matrix4f m, MsdfFont font,
 				float sx, float sy, float sw, float alpha,
@@ -715,6 +839,7 @@ public final class ClickGuiScreen extends Screen {
 			if (mx < x || mx > x + PANEL_W || my < bodyY || my > bodyY + bodyH)
 				return false;
 
+			float scroll = scrollAnim.getValue();
 			float ry = bodyY + 2.0f - scroll;
 			for (Module mod : modules) {
 				if (my >= ry && my < ry + MODULE_H) {
@@ -737,7 +862,7 @@ public final class ClickGuiScreen extends Screen {
 				if (sT > 0.01f && !mod.settings.isEmpty()) {
 					float sH = settingsContentHeight(mod) * sT;
 					if (my >= ry && my < ry + sH) {
-						if (handleSettingClick(mod, mx, my, ry, button)) return true;
+						if (handleSettingClick(mod, mx, my, ry, button, sH)) return true;
 					}
 					ry += sH + 1.0f;
 				}
@@ -746,12 +871,20 @@ public final class ClickGuiScreen extends Screen {
 			return false;
 		}
 
-		boolean handleSettingClick(Module mod, double mx, double my, float startY, int button) {
+		boolean handleSettingClick(Module mod, double mx, double my, float startY, int button,
+				float visibleH) {
 			float sx = x + 6.0f, sw = PANEL_W - 12.0f;
 			float sy = startY + 1.0f;
+			float endY = startY + visibleH;
 			for (Setting<?> setting : mod.settings) {
 				if (setting.getVisibility() != null && !setting.getVisibility().get())
 					continue;
+				// Mirror the render-time clip: only settings entirely within
+				// the visible rect are interactive; otherwise the user could
+				// click on a row that's animating below the visible area.
+				if (sy + SETTING_H - 1.0f > endY) {
+					break;
+				}
 
 				if (my >= sy && my < sy + SETTING_H) {
 					if (setting instanceof BooleanSetting bs) {
@@ -767,9 +900,9 @@ public final class ClickGuiScreen extends Screen {
 						if (button == 0) {
 							float trX = sx, trY = sy + 0.5f, trW = sw, trH = SETTING_H - 1.5f;
 							if (openDropdown != null && openDropdown.modeSetting == ms) {
-								openDropdown = null;
+								beginDropdownClose();
 							} else {
-								openDropdown = new OpenDropdown(ms, trX, trY, trW, trH);
+								beginDropdownOpen(new OpenDropdown(ms, trX, trY, trW, trH));
 							}
 							return true;
 						}
@@ -781,9 +914,9 @@ public final class ClickGuiScreen extends Screen {
 						if (button == 0) {
 							float trX = sx, trY = sy + 0.5f, trW = sw, trH = SETTING_H - 1.5f;
 							if (openDropdown != null && openDropdown.multiSetting == mu) {
-								openDropdown = null;
+								beginDropdownClose();
 							} else {
-								openDropdown = new OpenDropdown(mu, trX, trY, trW, trH);
+								beginDropdownOpen(new OpenDropdown(mu, trX, trY, trW, trH));
 							}
 							return true;
 						}

@@ -71,13 +71,14 @@ public final class AttackAura extends Module {
 	 *   <li><b>Free</b>: the original behaviour — every tick picks the best
 	 *       target by {@link #priority}, respects the configured {@link #fov}
 	 *       and debounces target swaps with {@link #switchDelayMs}.</li>
-	 *   <li><b>Focused</b>: lock-on. Once a target is acquired we stick with
-	 *       it until it dies or leaves {@code max(range, vision)} — even if
-	 *       a closer/lower-HP target appears. The FOV gate is dropped (full
-	 *       360° tracking), the aim tolerance is tightened so clicks land
-	 *       precisely on the chosen body part, and rotation correction is
-	 *       forced to {@code Targeted} so the camera visibly tracks the
-	 *       victim. This is the "full наводка" mode.</li>
+	 *   <li><b>Focused</b>: server-side lock-on. Once a target is acquired
+	 *       we stick with it until it dies or leaves {@code max(range,
+	 *       vision)} — even if a closer/lower-HP target appears. The FOV
+	 *       gate is dropped (full 360° tracking) and the aim tolerance is
+	 *       tightened so clicks land precisely on the chosen body part.
+	 *       Rotations are <em>always</em> sent server-side only (rotation
+	 *       packet after vanilla's per-tick movement); the local camera is
+	 *       never touched, so the user keeps full mouse control.</li>
 	 * </ul>
 	 */
 	public final ModeSetting   mode;
@@ -97,7 +98,6 @@ public final class AttackAura extends Module {
 	 */
 	public final ModeSetting   aimPart;
 	public final MultiSetting  targets;
-	public final ModeSetting   movementCorrection;
 	public final MultiSetting  extras;
 
 	// =========================================================================
@@ -170,9 +170,6 @@ public final class AttackAura extends Module {
 			List.of("Players", "Animals", "Mobs", "Friends"),
 			"Players");
 
-		this.movementCorrection = new ModeSetting("Movement Correction",
-			"Free", "Free", "Targeted");
-
 		this.extras = new MultiSetting("Extras",
 			List.of(
 				"Don't hit while eating",
@@ -191,10 +188,6 @@ public final class AttackAura extends Module {
 		this.priority.visibleWhen(() -> mode.is("Free"));
 		this.switchDelayMs.visibleWhen(() -> mode.is("Free"));
 		this.fov.visibleWhen(() -> mode.is("Free"));
-		// In Focused mode movement correction is forced to "Targeted" so
-		// the camera tracks the victim (the "full lock-on" feel) — hide
-		// the user-facing knob too so the displayed value can't lie.
-		this.movementCorrection.visibleWhen(() -> mode.is("Free"));
 
 		addSetting(this.mode);
 		addSetting(this.range);
@@ -207,7 +200,6 @@ public final class AttackAura extends Module {
 		addSetting(this.aimTolerance);
 		addSetting(this.aimPart);
 		addSetting(this.targets);
-		addSetting(this.movementCorrection);
 		addSetting(this.extras);
 	}
 
@@ -284,17 +276,14 @@ public final class AttackAura extends Module {
 
 	private void releaseTarget() {
 		boolean wasRotating = this.rotating;
-		// In silent-rotation mode (Free + movementCorrection=Free) the server
-		// has been holding our synthetic rotation since the last
+		// We always run silent (rotation-only packets), so the server has
+		// been holding our synthetic rotation since the last
 		// LookAndOnGround we sent. Vanilla won't update it until the user
 		// physically moves the mouse — which means that until they do,
 		// manual attacks land at our last fake angle, not at the
 		// crosshair. Send one final rotation packet that snaps the server
 		// back to the player's actual local rotation.
-		//
-		// In Focused mode we force the rotation to be visible, so this
-		// snap-back is never needed there.
-		if (wasRotating && isSilentRotation()) {
+		if (wasRotating) {
 			MinecraftClient client = MinecraftClient.getInstance();
 			ClientPlayerEntity player = client.player;
 			ClientPlayNetworkHandler net = client.getNetworkHandler();
@@ -323,20 +312,10 @@ public final class AttackAura extends Module {
 	}
 
 	/**
-	 * @return {@code true} when synthetic rotations are sent as a
-	 *         rotation-only packet (server sees them, local camera does not).
-	 *         Focused mode forces visible correction, so silent rotations
-	 *         only happen when Mode=Free AND Movement Correction=Free.
-	 */
-	private boolean isSilentRotation() {
-		return mode.is("Free") && movementCorrection.is("Free");
-	}
-
-	/**
 	 * @return the aim-tolerance threshold (degrees) actually used to gate
 	 *         attacks. Focused mode clamps it to a tight ≤4° regardless of
-	 *         the user's slider — combined with the camera lock this gives
-	 *         the "guaranteed headshot" feel the mode is designed for.
+	 *         the user's slider — combined with the server-side rotation
+	 *         lock this gives the "guaranteed headshot" feel.
 	 */
 	private float effectiveAimTolerance() {
 		float base = aimTolerance.getFloat();
@@ -514,29 +493,14 @@ public final class AttackAura extends Module {
 		this.serverPitch = nextPitch;
 		this.rotating = true;
 
-		boolean visible = !isSilentRotation();
-		if (visible) {
-			// Visible: move the actual player rotation so the camera follows
-			// the target. Vanilla's tick movement packet (sent BEFORE our
-			// onTick callback) already shipped this tick's rotation, so the
-			// new yaw/pitch will be visible to the server next tick.
-			//
-			// Reached when either Movement Correction == "Targeted" OR Mode
-			// == "Focused" (which forces the camera lock — full наводка).
-			player.setYaw(nextYaw);
-			player.setPitch(nextPitch);
-			player.setHeadYaw(nextYaw);
-			player.setBodyYaw(nextYaw);
-		} else {
-			// Silent: send a rotation-only packet AFTER vanilla's per-tick
-			// movement packet, so the server sees our rotation last while
-			// the local camera stays untouched. Free mode + Movement
-			// Correction = Free only.
-			ClientPlayNetworkHandler net = MinecraftClient.getInstance().getNetworkHandler();
-			if (net != null) {
-				net.sendPacket(new PlayerMoveC2SPacket.LookAndOnGround(
-					nextYaw, nextPitch, player.isOnGround(), player.horizontalCollision));
-			}
+		// Always silent: send a rotation-only packet AFTER vanilla's
+		// per-tick movement packet, so the server sees our rotation last
+		// while the local camera stays untouched. The user keeps full
+		// mouse control even while the aura is locked on a target.
+		ClientPlayNetworkHandler net = MinecraftClient.getInstance().getNetworkHandler();
+		if (net != null) {
+			net.sendPacket(new PlayerMoveC2SPacket.LookAndOnGround(
+				nextYaw, nextPitch, player.isOnGround(), player.horizontalCollision));
 		}
 	}
 
