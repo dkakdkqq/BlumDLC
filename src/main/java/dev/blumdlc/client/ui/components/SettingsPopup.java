@@ -1,5 +1,6 @@
 package dev.blumdlc.client.ui.components;
 
+import java.util.List;
 import java.util.function.Supplier;
 
 import org.joml.Matrix4f;
@@ -57,8 +58,9 @@ public final class SettingsPopup {
 	private NumberSetting draggingSlider;
 	private ColorSetting draggingColor;
 
-	// --- Open ModeSetting dropdown overlay ---
-	private ModeSetting openDropdown;
+	// --- Open dropdown overlay (ModeSetting picks one, MultiSetting toggles
+	//     several without auto-closing). ---
+	private Setting<?> openDropdown;
 	private float dropdownX, dropdownY, dropdownW, dropdownH;
 	/** Final Y where the dropdown list was rendered (after flip / clamp). */
 	private float dropdownListY;
@@ -407,8 +409,10 @@ public final class SettingsPopup {
 			if (visible) ny = drawMode(matrix, font, ms, x, ny, w, a, mouseX, mouseY);
 			else ny += 18.0f;
 		} else if (s instanceof MultiSetting mu) {
+			// MultiSetting renders as a single dropdown trigger now, same
+			// vertical footprint as ModeSetting.
 			if (visible) ny = drawMulti(matrix, font, mu, x, ny, w, a, mouseX, mouseY);
-			else ny += mu.options.size() * 17.0f;
+			else ny += 18.0f;
 		} else {
 			ny += 14.0f;
 		}
@@ -508,6 +512,22 @@ public final class SettingsPopup {
 
 	private float drawMode(Matrix4f matrix, MsdfFont font, ModeSetting s,
 			float x, float y, float w, float a, int mouseX, int mouseY) {
+		return drawDropdownTrigger(matrix, font, s, s.get(), x, y, w, a, mouseX, mouseY);
+	}
+
+	private float drawMulti(Matrix4f matrix, MsdfFont font, MultiSetting s,
+			float x, float y, float w, float a, int mouseX, int mouseY) {
+		return drawDropdownTrigger(matrix, font, s, s.summary(), x, y, w, a, mouseX, mouseY);
+	}
+
+	/**
+	 * Renders the collapsed-row trigger shared by {@link ModeSetting} and
+	 * {@link MultiSetting}: a card with the current value/summary on the
+	 * left and a caret on the right. Stashes its bounds when this setting
+	 * is the open dropdown so the overlay knows where to anchor.
+	 */
+	private float drawDropdownTrigger(Matrix4f matrix, MsdfFont font, Setting<?> s,
+			String summary, float x, float y, float w, float a, int mouseX, int mouseY) {
 		float h = 16.0f;
 		boolean hovered = inside(mouseX, mouseY, x, y, w, h);
 		boolean open = (openDropdown == s);
@@ -520,7 +540,7 @@ public final class SettingsPopup {
 
 		// Reserve room on the right for the caret indicator (~8 px) so the
 		// current value never overlaps it.
-		String label = UIRender.ellipsize(font, s.get(), 7.5f, w - 24.0f);
+		String label = UIRender.ellipsize(font, summary, 7.5f, w - 24.0f);
 		UIRender.text(matrix, font, label, x + 8.0f, y + 4.5f, 7.5f,
 			ColorUtil.multiplyAlpha(Theme.TEXT_PRIMARY, a), 0.05f);
 		drawCaret(matrix, x + w - 11.0f, y + 6.0f, 5.0f, !open,
@@ -536,49 +556,26 @@ public final class SettingsPopup {
 		return y + h + 2.0f;
 	}
 
-	private float drawMulti(Matrix4f matrix, MsdfFont font, MultiSetting s,
-			float x, float y, float w, float a, int mouseX, int mouseY) {
-		float rowH = 14.0f;
-		float rowGap = 3.0f;
-		float cy = y;
-		for (String opt : s.options) {
-			boolean selected = s.isSelected(opt);
-			boolean hovered = inside(mouseX, mouseY, x, cy, w, rowH);
-
-			if (selected) {
-				float p = 0.85f + 0.15f * (float) Math.sin(now() * 2.4);
-				UIRender.rectGradientH(matrix, x, cy, w, rowH, 6.0f,
-					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_FROM, p * a),
-					ColorUtil.multiplyAlpha(Theme.CARD_ACTIVE_TO,   p * a));
-			} else {
-				UIRender.rectGradientV(matrix, x, cy, w, rowH, 6.0f,
-					ColorUtil.multiplyAlpha(hovered ? Theme.CARD_HOVER : Theme.CARD_BG_TOP, a),
-					ColorUtil.multiplyAlpha(hovered ? Theme.CARD_HOVER : Theme.CARD_BG_BOT, a));
-				UIRender.border(matrix, x, cy, w, rowH, 6.0f, 1.0f,
-					ColorUtil.multiplyAlpha(Theme.CARD_BORDER, 0.5f * a));
-			}
-
-			int textColor = selected ? 0xFFFFFFFF : Theme.TEXT_SECONDARY;
-			String label = UIRender.ellipsize(font, opt, 7.0f, w - 16.0f);
-			UIRender.text(matrix, font, label, x + 8.0f, cy + 3.5f, 7.0f,
-				ColorUtil.multiplyAlpha(textColor, a), 0.04f);
-
-			cy += rowH + rowGap;
-		}
-		return cy;
-	}
-
 	private void drawDropdownOverlay(DrawContext ctx, Matrix4f matrix, MsdfFont font, float a,
 			int mouseX, int mouseY) {
-		ModeSetting s = openDropdown;
+		Setting<?> s = openDropdown;
 		if (s == null) {
 			this.dropdownListY = 0.0f;
 			this.dropdownListH = 0.0f;
 			return;
 		}
 
+		List<String> items = dropdownItems(s);
+		if (items.isEmpty()) {
+			this.openDropdown = null;
+			this.dropdownListY = 0.0f;
+			this.dropdownListH = 0.0f;
+			return;
+		}
+		boolean multi = s instanceof MultiSetting;
+
 		float rowH = 14.0f;
-		float listH = s.modes.size() * rowH;
+		float listH = items.size() * rowH;
 
 		// Find the best vertical placement: prefer below, fall back to above,
 		// then pin to whichever side has the most room. All the while keeping
@@ -625,10 +622,9 @@ public final class SettingsPopup {
 			ColorUtil.multiplyAlpha(Theme.ACCENT, a));
 
 		float cy = y;
-		String selected = s.get();
-		for (String mode : s.modes) {
+		for (String item : items) {
 			if (cy >= y + drawnH) break;
-			boolean isSelected = mode.equals(selected);
+			boolean isSelected = dropdownIsSelected(s, item);
 			boolean hovered = inside(mouseX, mouseY, x, cy, w, rowH);
 
 			if (isSelected) {
@@ -640,15 +636,51 @@ public final class SettingsPopup {
 					ColorUtil.multiplyAlpha(Theme.CARD_HOVER, a));
 			}
 
+			// Multi-select rows draw a small box on the left so the toggle
+			// affordance is unambiguous; single-select rows just rely on the
+			// row highlight.
+			float labelLeft = x + 8.0f;
+			if (multi) {
+				float boxSize = 7.0f;
+				float bx = x + 6.0f;
+				float by = cy + (rowH - boxSize) * 0.5f;
+				int boxColor = isSelected ? 0xFFFFFFFF : Theme.TEXT_MUTED;
+				UIRender.border(matrix, bx, by, boxSize, boxSize, 1.5f, 1.0f,
+					ColorUtil.multiplyAlpha(boxColor, a));
+				if (isSelected) {
+					UIRender.rect(matrix, bx + 1.5f, by + 1.5f, boxSize - 3.0f, boxSize - 3.0f,
+						0.5f, ColorUtil.multiplyAlpha(0xFFFFFFFF, a));
+				}
+				labelLeft = bx + boxSize + 4.0f;
+			}
+
 			int textColor = isSelected ? 0xFFFFFFFF : Theme.TEXT_SECONDARY;
-			String label = UIRender.ellipsize(font, mode, 7.0f, w - 16.0f);
-			UIRender.text(matrix, font, label, x + 8.0f, cy + 3.5f, 7.0f,
+			String label = UIRender.ellipsize(font, item, 7.0f, w - (labelLeft - x) - 6.0f);
+			UIRender.text(matrix, font, label, labelLeft, cy + 3.5f, 7.0f,
 				ColorUtil.multiplyAlpha(textColor, a), 0.04f);
 
 			cy += rowH;
 		}
 
 		ctx.disableScissor();
+	}
+
+	/** Items to show in the dropdown overlay for {@code s}. */
+	private static List<String> dropdownItems(Setting<?> s) {
+		if (s instanceof ModeSetting ms)  return ms.modes;
+		if (s instanceof MultiSetting mu) return mu.options;
+		return List.of();
+	}
+
+	/**
+	 * Whether {@code item} should be highlighted as currently selected. For
+	 * single-pick this is the chosen value; for multi-select this is "is in
+	 * the current set".
+	 */
+	private static boolean dropdownIsSelected(Setting<?> s, String item) {
+		if (s instanceof ModeSetting ms)  return item.equals(ms.get());
+		if (s instanceof MultiSetting mu) return mu.isSelected(item);
+		return false;
 	}
 
 	// =========================================================================
@@ -670,11 +702,22 @@ public final class SettingsPopup {
 				&& inside(mouseX, mouseY, dropdownX, listY, dropdownW, listH)) {
 				float rowH = 14.0f;
 				int idx = (int) ((mouseY - listY) / rowH);
-				if (idx >= 0 && idx < openDropdown.modes.size()) {
-					openDropdown.set(openDropdown.modes.get(idx));
+				List<String> items = dropdownItems(openDropdown);
+				if (idx >= 0 && idx < items.size()) {
+					if (openDropdown instanceof ModeSetting ms) {
+						ms.set(items.get(idx));
+						openDropdown = null;     // single-pick: close after choice
+					} else if (openDropdown instanceof MultiSetting mu) {
+						mu.toggle(items.get(idx));
+						// keep the dropdown open so multiple toggles can be
+						// performed in one go
+					} else {
+						openDropdown = null;
+					}
 					cachedSettingsHeight = -1.0f;
+				} else {
+					openDropdown = null;
 				}
-				openDropdown = null;
 				return true;
 			}
 			if (inside(mouseX, mouseY, dropdownX, dropdownY, dropdownW, dropdownH)) {
@@ -739,18 +782,12 @@ public final class SettingsPopup {
 				cy = controlY + h + 2.0f + ROW_GAP;
 
 			} else if (s instanceof MultiSetting mu) {
-				float rowH = 14.0f;
-				float rowGap = 3.0f;
-				float ry = controlY;
-				for (String opt : mu.options) {
-					if (inside(mouseX, mouseY, contentX, ry, contentW, rowH) && button == 0) {
-						mu.toggle(opt);
-						cachedSettingsHeight = -1.0f;
-						return true;
-					}
-					ry += rowH + rowGap;
+				float h = 16.0f;
+				if (inside(mouseX, mouseY, contentX, controlY, contentW, h) && button == 0) {
+					openDropdown = (openDropdown == mu) ? null : mu;
+					return true;
 				}
-				cy = ry + ROW_GAP;
+				cy = controlY + h + 2.0f + ROW_GAP;
 
 			} else {
 				cy = controlY + 14.0f + ROW_GAP;
@@ -776,8 +813,11 @@ public final class SettingsPopup {
 				h += 12.0f + 22.0f;
 			} else if (s instanceof ModeSetting) {
 				h += 12.0f + 18.0f;
-			} else if (s instanceof MultiSetting mu) {
-				h += 12.0f + mu.options.size() * 17.0f;
+			} else if (s instanceof MultiSetting) {
+				// Same trigger geometry as ModeSetting now (a single row that
+				// opens an overlay on click), so the surrounding settings
+				// list doesn't shift when options are toggled.
+				h += 12.0f + 18.0f;
 			} else {
 				h += 12.0f + 14.0f;
 			}
@@ -862,10 +902,5 @@ public final class SettingsPopup {
 
 	private static float clamp01(float v) {
 		return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
-	}
-
-	/** Seconds-resolution timer used to drive ambient pulse animations. */
-	private static float now() {
-		return (System.currentTimeMillis() % 1_000_000L) / 1000.0f;
 	}
 }
