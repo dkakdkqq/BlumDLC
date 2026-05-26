@@ -13,6 +13,7 @@ import dev.blumdlc.client.settings.NumberSetting;
 import dev.blumdlc.client.util.Projection;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.texture.AbstractTexture;
+import net.minecraft.client.util.Window;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.Box;
@@ -120,10 +121,23 @@ public final class TargetESP extends Module {
 		}
 
 		// 3. Compose a rotated matrix around the projected anchor point.
-		float px = projected.x();
-		float py = projected.y();
 		float boxSize = size.getFloat();
 		float angle = currentAngle();
+
+		// Clamp the anchor to the visible scaled-screen rectangle so the
+		// reticle stays fully on screen even when the target drifts to the
+		// edge of (or past) the viewport. We inset by half the texture
+		// size on each axis so the quad — which is centred on (px, py) —
+		// never has a half hanging off the side. Without this clamp the
+		// projected (x, y) can be far outside [0, scaledW] when the
+		// target is in front of the camera but outside the viewport,
+		// which let the reticle "fly off" / disappear at edges.
+		Window window = MinecraftClient.getInstance().getWindow();
+		float sw = window.getScaledWidth();
+		float sh = window.getScaledHeight();
+		float half = boxSize * 0.5f;
+		float px = clamp(projected.x(), half, sw - half);
+		float py = clamp(projected.y(), half, sh - half);
 
 		Matrix4f rotated = new Matrix4f(matrix)
 			.translate(px, py, 0.0f)
@@ -293,6 +307,20 @@ public final class TargetESP extends Module {
 		float w = boxW * scale;
 		float h = boxH * scale;
 
+		// Same clamping idea as renderReticle: keep the label centre at
+		// least half-width inside the visible scaled-screen rectangle so
+		// it never partially hangs off the side. When the target drifts
+		// just past the viewport edge the projected AABB centre walks
+		// off the screen — without clamping the label would slide off
+		// with it. With clamping it stays anchored to the nearest edge.
+		// Falls back to mid-screen if the label is bigger than the
+		// viewport on an axis (clamp() handles inverted bounds).
+		Window window = MinecraftClient.getInstance().getWindow();
+		float sw = window.getScaledWidth();
+		float sh = window.getScaledHeight();
+		cx = clamp(cx, w * 0.5f, sw - w * 0.5f);
+		cy = clamp(cy, h * 0.5f, sh - h * 0.5f);
+
 		int alpha = clampAlpha((int) brightness.get().doubleValue());
 		QuadColorState quadColors = paletteFor(color.get(), currentAngle(), alpha);
 
@@ -383,6 +411,16 @@ public final class TargetESP extends Module {
 		if (a < 0) return 0;
 		if (a > 255) return 255;
 		return a;
+	}
+
+	/** Clamp a float to [{@code lo}, {@code hi}], falling back to the midpoint when the bounds are inverted. */
+	private static float clamp(float v, float lo, float hi) {
+		if (lo > hi) {
+			return (lo + hi) * 0.5f;
+		}
+		if (v < lo) return lo;
+		if (v > hi) return hi;
+		return v;
 	}
 
 	/**
