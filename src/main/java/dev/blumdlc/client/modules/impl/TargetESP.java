@@ -28,18 +28,15 @@ import net.minecraft.util.math.Vec3d;
  *       target's body center.</li>
  *   <li><b>Cube</b> — a 3D wireframe cube traced around the target's
  *       bounding box. The 8 corners are rotated around the entity's
- *       vertical axis over time so the cube slowly spins (matches what
- *       popular cheat visuals do for "3D Box" target-modes), then projected
- *       to screen and connected with thin gradient edges. Top edges use the
- *       palette's primary stop, bottom edges the secondary stop, and the
- *       four vertical edges blend between them.</li>
- *   <li><b>Ghost</b> — N copies of
- *       {@code assets/blumdlc/textures/target2.png} orbit the target's
- *       body center on a horizontal circle in world space, with a small
- *       vertical bob so they "float" instead of sliding flat. The orbit
- *       point is projected to screen each frame and the sprite is sized
- *       to the entity's projected height so it stays in scale at any
- *       distance.</li>
+ *       vertical axis over time so the cube slowly spins, then projected
+ *       to screen and connected with thin gradient edges. Top edges use
+ *       the palette's primary stop, bottom edges the secondary stop, and
+ *       the four vertical edges blend between them.</li>
+ *   <li><b>Label</b> — uses Cube's projection logic (lerped hitbox, project
+ *       all 8 corners) to compute the screen-space AABB of the target,
+ *       then stretches {@code assets/blumdlc/textures/target2.png} to
+ *       fit inside that box. The texture sits "inside" the player as a
+ *       billboarded label that scales correctly at every distance.</li>
  * </ul>
  *
  * <p>All modes go through the project's existing {@link Builder} API — no
@@ -50,7 +47,7 @@ import net.minecraft.util.math.Vec3d;
 public final class TargetESP extends Module {
 
 	private static final Identifier TEXTURE_RETICLE = Identifier.of("blumdlc", "textures/target.png");
-	private static final Identifier TEXTURE_GHOST   = Identifier.of("blumdlc", "textures/target2.png");
+	private static final Identifier TEXTURE_LABEL   = Identifier.of("blumdlc", "textures/target2.png");
 
 	private final AttackAura attackAura;
 
@@ -61,28 +58,20 @@ public final class TargetESP extends Module {
 	public final ModeSetting   color;
 	/** Cube edge thickness (px). Hidden in non-Cube modes. */
 	public final NumberSetting thickness;
-	/** Number of orbiting ghosts. Hidden in non-Ghost modes. */
-	public final NumberSetting ghosts;
-	/** Orbit radius in blocks. Hidden in non-Ghost modes. */
-	public final NumberSetting orbitRadius;
 
 	public TargetESP(AttackAura attackAura) {
 		super("TargetESP", "Marks the entity AttackAura is locked onto", Category.RENDER);
 		this.attackAura = attackAura;
 
-		this.mode       = new ModeSetting("Mode", "Reticle", "Reticle", "Cube", "Ghost");
+		this.mode       = new ModeSetting("Mode", "Reticle", "Reticle", "Cube", "Label");
 		this.size       = new NumberSetting("Size",        45.0,  10.0, 140.0, 1.0);
 		this.speed      = new NumberSetting("Speed",        3.0,   0.5,   9.0, 0.1);
 		this.brightness = new NumberSetting("Brightness", 220.0,  20.0, 255.0, 1.0);
 		this.color      = new ModeSetting("Color", "Magenta",
 			"Magenta", "Cyan", "Crimson", "Lime", "Gold", "Rainbow");
-		this.thickness   = new NumberSetting("Thickness",   1.4,  0.5,   4.0, 0.1);
-		this.ghosts      = new NumberSetting("Ghosts",      3.0,  1.0,   4.0, 1.0);
-		this.orbitRadius = new NumberSetting("Orbit Radius", 0.85, 0.4,  2.5, 0.05);
+		this.thickness  = new NumberSetting("Thickness",   1.4,  0.5,   4.0, 0.1);
 
 		this.thickness.visibleWhen(() -> mode.is("Cube"));
-		this.ghosts.visibleWhen(() -> mode.is("Ghost"));
-		this.orbitRadius.visibleWhen(() -> mode.is("Ghost"));
 
 		addSetting(this.mode);
 		addSetting(this.size);
@@ -90,8 +79,6 @@ public final class TargetESP extends Module {
 		addSetting(this.brightness);
 		addSetting(this.color);
 		addSetting(this.thickness);
-		addSetting(this.ghosts);
-		addSetting(this.orbitRadius);
 	}
 
 	@Override
@@ -106,7 +93,7 @@ public final class TargetESP extends Module {
 
 		switch (mode.get()) {
 			case "Cube"  -> renderCube(matrix, target, tickDelta);
-			case "Ghost" -> renderGhost(matrix, target, tickDelta);
+			case "Label" -> renderLabel(matrix, target, tickDelta);
 			default      -> renderReticle(matrix, target, tickDelta); // "Reticle" + safety net
 		}
 	}
@@ -163,11 +150,7 @@ public final class TargetESP extends Module {
 
 	private void renderCube(Matrix4f matrix, LivingEntity target, float tickDelta) {
 		// Use a lerped bounding box for smooth motion between ticks.
-		Vec3d lerped = target.getLerpedPos(tickDelta);
-		double dx = lerped.x - target.getX();
-		double dy = lerped.y - target.getY();
-		double dz = lerped.z - target.getZ();
-		Box box = target.getBoundingBox().offset(dx, dy, dz);
+		Box box = lerpedHitbox(target, tickDelta);
 
 		double cx = (box.minX + box.maxX) * 0.5;
 		double cz = (box.minZ + box.maxZ) * 0.5;
@@ -252,79 +235,93 @@ public final class TargetESP extends Module {
 	}
 
 	// =========================================================================
-	// Ghost (orbiting target2.png sprites)
+	// Label (target2.png stretched to fit the entity's screen-space AABB)
 	// =========================================================================
 
-	private void renderGhost(Matrix4f matrix, LivingEntity target, float tickDelta) {
-		Vec3d lerped = target.getLerpedPos(tickDelta);
-		double cx = lerped.x;
-		double cy = lerped.y + target.getHeight() * 0.5;
-		double cz = lerped.z;
+	/**
+	 * Project the same 8 hitbox corners that {@link #renderCube} uses,
+	 * collapse them to a screen-space AABB, then stretch the label
+	 * texture to cover that box. The result is a billboarded sprite that
+	 * sits inside the player's silhouette and follows them through space
+	 * by exactly the same projection pipeline as Cube.
+	 *
+	 * <p>No corner-rotation around the vertical axis here on purpose:
+	 * the label is supposed to <em>stick</em> to the target like a logo,
+	 * not pulse with the cube's spin. The {@link #size} slider provides a
+	 * uniform scale around the AABB centre (50 = exact fit).
+	 */
+	private void renderLabel(Matrix4f matrix, LivingEntity target, float tickDelta) {
+		Box box = lerpedHitbox(target, tickDelta);
 
-		AbstractTexture tex = MinecraftClient.getInstance().getTextureManager().getTexture(TEXTURE_GHOST);
+		double[][] corners = {
+			{ box.minX, box.minY, box.minZ }, { box.maxX, box.minY, box.minZ },
+			{ box.minX, box.maxY, box.minZ }, { box.maxX, box.maxY, box.minZ },
+			{ box.minX, box.minY, box.maxZ }, { box.maxX, box.minY, box.maxZ },
+			{ box.minX, box.maxY, box.maxZ }, { box.maxX, box.maxY, box.maxZ },
+		};
+
+		float minX = Float.POSITIVE_INFINITY, minY = Float.POSITIVE_INFINITY;
+		float maxX = Float.NEGATIVE_INFINITY, maxY = Float.NEGATIVE_INFINITY;
+		for (double[] c : corners) {
+			Projection.Result r = Projection.project(c[0], c[1], c[2]);
+			if (!r.onScreen()) {
+				return;
+			}
+			if (r.x() < minX) minX = r.x();
+			if (r.y() < minY) minY = r.y();
+			if (r.x() > maxX) maxX = r.x();
+			if (r.y() > maxY) maxY = r.y();
+		}
+
+		float boxW = maxX - minX;
+		float boxH = maxY - minY;
+		if (boxW < 2.0f || boxH < 2.0f) {
+			return;
+		}
+
+		AbstractTexture tex = MinecraftClient.getInstance().getTextureManager().getTexture(TEXTURE_LABEL);
 		if (tex == null) {
 			return;
 		}
 
-		// Use the entity's projected screen-height as the "natural" sprite
-		// scale so the ghosts stay in scale at any distance. Project the
-		// top + bottom of the entity, take the pixel delta.
-		Projection.Result topProj = Projection.project(cx, lerped.y + target.getHeight(), cz);
-		Projection.Result botProj = Projection.project(cx, lerped.y, cz);
-		if (!topProj.onScreen() || !botProj.onScreen()) {
-			return;
-		}
-		float entityHeightOnScreen = botProj.y() - topProj.y();
-		if (entityHeightOnScreen < 1.0f) {
-			return;
-		}
-
-		// size=50 means "match entity height exactly". The 10..140 slider
-		// then maps to roughly 0.2..2.8x entity height — enough to taste.
-		float ghostSize = entityHeightOnScreen * size.getFloat() / 50.0f;
-		ghostSize = Math.max(8.0f, Math.min(320.0f, ghostSize));
-
-		float angle = currentAngle();
-		float radius = orbitRadius.getFloat();
-		int count = (int) Math.round(ghosts.get().doubleValue());
-		if (count < 1) count = 1;
-		if (count > 4) count = 4;
+		// Uniform scale around the AABB centre. Default 45 → 0.9× (sits
+		// just inside the player), 50 = exact fit, 140 = ~2.8× for a
+		// poster-sized overlay.
+		float scale = size.getFloat() / 50.0f;
+		float cx = (minX + maxX) * 0.5f;
+		float cy = (minY + maxY) * 0.5f;
+		float w = boxW * scale;
+		float h = boxH * scale;
 
 		int alpha = clampAlpha((int) brightness.get().doubleValue());
-		// Vertical bob amplitude relative to entity height — feels alive
-		// without making the ghost slide off the entity in tall mobs.
-		float bobAmplitude = (float) (target.getHeight() * 0.12);
+		QuadColorState quadColors = paletteFor(color.get(), currentAngle(), alpha);
 
-		for (int i = 0; i < count; i++) {
-			float a = angle + (float) (i * 2.0 * Math.PI / count);
-			double ox = cx + radius * Math.cos(a);
-			double oz = cz + radius * Math.sin(a);
-			// Each ghost bobs on a slightly different sine phase so the
-			// formation breathes instead of moving in lockstep.
-			double oy = cy + bobAmplitude * Math.sin(angle * 1.7 + i * 0.8);
-
-			Projection.Result p = Projection.project(ox, oy, oz);
-			if (!p.onScreen()) {
-				continue;
-			}
-
-			// Hue shift per ghost so Rainbow tints them as a coloured ring.
-			QuadColorState corners = paletteFor(color.get(), a + i * 0.5f, alpha);
-
-			Builder.texture()
-				.size(new SizeState(ghostSize, ghostSize))
-				.radius(QuadRadiusState.NO_ROUND)
-				.color(corners)
-				.smoothness(1.0f)
-				.texture(0.0f, 0.0f, 1.0f, 1.0f, tex)
-				.build()
-				.render(matrix, p.x() - ghostSize * 0.5f, p.y() - ghostSize * 0.5f);
-		}
+		Builder.texture()
+			.size(new SizeState(w, h))
+			.radius(QuadRadiusState.NO_ROUND)
+			.color(quadColors)
+			.smoothness(1.0f)
+			.texture(0.0f, 0.0f, 1.0f, 1.0f, tex)
+			.build()
+			.render(matrix, cx - w * 0.5f, cy - h * 0.5f);
 	}
 
 	// =========================================================================
 	// Drawing helpers
 	// =========================================================================
+
+	/**
+	 * Return {@code target}'s bounding box offset into its lerp-interpolated
+	 * position, so frames between ticks render the box at the visually
+	 * correct spot rather than the last full-tick snapshot.
+	 */
+	private static Box lerpedHitbox(LivingEntity target, float tickDelta) {
+		Vec3d lerped = target.getLerpedPos(tickDelta);
+		double dx = lerped.x - target.getX();
+		double dy = lerped.y - target.getY();
+		double dz = lerped.z - target.getZ();
+		return target.getBoundingBox().offset(dx, dy, dz);
+	}
 
 	/**
 	 * Draw a thin line from {@code (x1,y1)} to {@code (x2,y2)} as a rotated
