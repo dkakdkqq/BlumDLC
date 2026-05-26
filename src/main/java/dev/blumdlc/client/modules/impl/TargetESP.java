@@ -16,39 +16,46 @@ import net.minecraft.client.texture.AbstractTexture;
 import net.minecraft.client.util.Window;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.util.Identifier;
-import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 
 /**
  * TargetESP — visualises the entity {@link AttackAura} is currently locked
- * onto. Three visual modes are exposed:
+ * onto. Two visual modes are exposed:
  *
  * <ul>
- *   <li><b>Reticle</b> — original behaviour. A rotating
- *       {@code assets/blumdlc/textures/target.png} reticle anchored at the
- *       target's body center.</li>
- *   <li><b>Cube</b> — a 3D wireframe cube traced around the target's
- *       bounding box. The 8 corners are rotated around the entity's
- *       vertical axis over time so the cube slowly spins, then projected
- *       to screen and connected with thin gradient edges. Top edges use
- *       the palette's primary stop, bottom edges the secondary stop, and
- *       the four vertical edges blend between them.</li>
- *   <li><b>Label</b> — uses Cube's projection logic (lerped hitbox, project
- *       all 8 corners) to compute the screen-space AABB of the target,
- *       then stretches {@code assets/blumdlc/textures/target2.png} to
- *       fit inside that box. The texture sits "inside" the player as a
- *       billboarded label that scales correctly at every distance.</li>
+ *   <li><b>Cube</b> — a rotating
+ *       {@code assets/blumdlc/textures/target.png} sprite anchored at the
+ *       target's body centre. Replaces the old reticle name; pure 2D, no
+ *       wireframe.</li>
+ *   <li><b>Label</b> — an orbital "ghost trail" effect adapted from the
+ *       reference TargetESP design. Many fading copies of
+ *       {@code assets/blumdlc/textures/target2.png} sweep around the
+ *       target on two interleaved rings — one anchored just above the
+ *       body centre, one just above the feet — each rotating in opposite
+ *       phase so the trails braid together.</li>
  * </ul>
  *
- * <p>All modes go through the project's existing {@link Builder} API — no
- * vanilla draw helpers are touched. Rendering happens in the HUD pass
- * (post-world), so the visual is always drawn on top regardless of
- * occluding geometry; that's the same trade-off as {@link ESP}.
+ * <p>Both modes go through the project's existing {@link Builder} API and
+ * clamp their on-screen anchor to the visible scaled-screen rectangle so
+ * the visual never slides past the viewport edge.
  */
 public final class TargetESP extends Module {
 
-	private static final Identifier TEXTURE_RETICLE = Identifier.of("blumdlc", "textures/target.png");
-	private static final Identifier TEXTURE_LABEL   = Identifier.of("blumdlc", "textures/target2.png");
+	private static final Identifier TEXTURE_CUBE  = Identifier.of("blumdlc", "textures/target.png");
+	private static final Identifier TEXTURE_LABEL = Identifier.of("blumdlc", "textures/target2.png");
+
+	/** Number of trail copies stacked behind the lead sprite in Label mode. */
+	private static final int   LABEL_TRAIL_COUNT  = 40;
+	/** XZ-plane orbit radius (in blocks) for the Label trail rings. */
+	private static final double LABEL_ORBIT_RADIUS = 0.5;
+	/** Vertical bob amplitude (in blocks) so the trails rise/fall instead of sliding flat. */
+	private static final double LABEL_BOB_AMPLITUDE = 0.26;
+	/** Per-step time delay between consecutive trail copies. */
+	private static final double LABEL_TRAIL_STEP    = 0.1;
+	/** Per-step alpha fade between consecutive trail copies. */
+	private static final int    LABEL_ALPHA_STEP    = 5;
+	/** Per-step size shrink factor between consecutive trail copies. */
+	private static final float  LABEL_SIZE_STEP     = 0.02f;
 
 	private final AttackAura attackAura;
 
@@ -57,29 +64,23 @@ public final class TargetESP extends Module {
 	public final NumberSetting speed;
 	public final NumberSetting brightness;
 	public final ModeSetting   color;
-	/** Cube edge thickness (px). Hidden in non-Cube modes. */
-	public final NumberSetting thickness;
 
 	public TargetESP(AttackAura attackAura) {
 		super("TargetESP", "Marks the entity AttackAura is locked onto", Category.RENDER);
 		this.attackAura = attackAura;
 
-		this.mode       = new ModeSetting("Mode", "Reticle", "Reticle", "Cube", "Label");
+		this.mode       = new ModeSetting("Mode", "Cube", "Cube", "Label");
 		this.size       = new NumberSetting("Size",        45.0,  10.0, 140.0, 1.0);
 		this.speed      = new NumberSetting("Speed",        3.0,   0.5,   9.0, 0.1);
 		this.brightness = new NumberSetting("Brightness", 220.0,  20.0, 255.0, 1.0);
 		this.color      = new ModeSetting("Color", "Magenta",
 			"Magenta", "Cyan", "Crimson", "Lime", "Gold", "Rainbow");
-		this.thickness  = new NumberSetting("Thickness",   1.4,  0.5,   4.0, 0.1);
-
-		this.thickness.visibleWhen(() -> mode.is("Cube"));
 
 		addSetting(this.mode);
 		addSetting(this.size);
 		addSetting(this.speed);
 		addSetting(this.brightness);
 		addSetting(this.color);
-		addSetting(this.thickness);
 	}
 
 	@Override
@@ -93,17 +94,16 @@ public final class TargetESP extends Module {
 		}
 
 		switch (mode.get()) {
-			case "Cube"  -> renderCube(matrix, target, tickDelta);
 			case "Label" -> renderLabel(matrix, target, tickDelta);
-			default      -> renderReticle(matrix, target, tickDelta); // "Reticle" + safety net
+			default      -> renderCube(matrix, target, tickDelta); // "Cube" + safety net
 		}
 	}
 
 	// =========================================================================
-	// Reticle (legacy mode — unchanged behaviour)
+	// Cube — rotating target.png sprite at the target's body centre
 	// =========================================================================
 
-	private void renderReticle(Matrix4f matrix, LivingEntity target, float tickDelta) {
+	private void renderCube(Matrix4f matrix, LivingEntity target, float tickDelta) {
 		// 1. Project the target's body center to scaled-screen coords.
 		Vec3d pos = target.getLerpedPos(tickDelta);
 		double anchorY = pos.y + target.getHeight() * 0.5;
@@ -115,23 +115,17 @@ public final class TargetESP extends Module {
 		// 2. Resolve the texture id (auto-registers as a ResourceTexture
 		//    on first call). If the asset is missing the manager hands back
 		//    Minecraft's default missing-texture, which is harmless.
-		AbstractTexture tex = MinecraftClient.getInstance().getTextureManager().getTexture(TEXTURE_RETICLE);
+		AbstractTexture tex = MinecraftClient.getInstance().getTextureManager().getTexture(TEXTURE_CUBE);
 		if (tex == null) {
 			return;
 		}
 
-		// 3. Compose a rotated matrix around the projected anchor point.
 		float boxSize = size.getFloat();
 		float angle = currentAngle();
 
 		// Clamp the anchor to the visible scaled-screen rectangle so the
-		// reticle stays fully on screen even when the target drifts to the
-		// edge of (or past) the viewport. We inset by half the texture
-		// size on each axis so the quad — which is centred on (px, py) —
-		// never has a half hanging off the side. Without this clamp the
-		// projected (x, y) can be far outside [0, scaledW] when the
-		// target is in front of the camera but outside the viewport,
-		// which let the reticle "fly off" / disappear at edges.
+		// sprite stays fully on screen even when the target drifts to the
+		// edge of (or past) the viewport.
 		Window window = MinecraftClient.getInstance().getWindow();
 		float sw = window.getScaledWidth();
 		float sh = window.getScaledHeight();
@@ -144,7 +138,6 @@ public final class TargetESP extends Module {
 			.rotateZ(angle)
 			.translate(-px, -py, 0.0f);
 
-		// 4. Draw the quad through the existing texture renderer.
 		int alpha = clampAlpha((int) brightness.get().doubleValue());
 		QuadColorState corners = paletteFor(color.get(), angle, alpha);
 
@@ -159,238 +152,117 @@ public final class TargetESP extends Module {
 	}
 
 	// =========================================================================
-	// Cube (3D wireframe around hitbox, slowly spinning around vertical axis)
-	// =========================================================================
-
-	private void renderCube(Matrix4f matrix, LivingEntity target, float tickDelta) {
-		// Use a lerped bounding box for smooth motion between ticks.
-		Box box = lerpedHitbox(target, tickDelta);
-
-		double cx = (box.minX + box.maxX) * 0.5;
-		double cz = (box.minZ + box.maxZ) * 0.5;
-
-		// Spin the four XZ corners around the entity's vertical axis over
-		// time. We rotate the local-space corner offsets by the current
-		// angle, then translate them back to world space so projection
-		// remains consistent with the rest of the world.
-		float angle = currentAngle();
-		double cos = Math.cos(angle);
-		double sin = Math.sin(angle);
-
-		// Local corner offsets (XZ) ordered: 0=(-,-) 1=(+,-) 2=(-,+) 3=(+,+).
-		double hx = (box.maxX - box.minX) * 0.5;
-		double hz = (box.maxZ - box.minZ) * 0.5;
-		double[][] localXZ = {
-			{ -hx, -hz },
-			{  hx, -hz },
-			{ -hx,  hz },
-			{  hx,  hz },
-		};
-		double[] xs = new double[8];
-		double[] ys = new double[8];
-		double[] zs = new double[8];
-		for (int i = 0; i < 4; i++) {
-			double lx = localXZ[i][0];
-			double lz = localXZ[i][1];
-			double rx = lx * cos - lz * sin;
-			double rz = lx * sin + lz * cos;
-			// Bottom ring (i = 0..3) at minY, top ring (i = 4..7) at maxY.
-			xs[i]     = cx + rx;
-			ys[i]     = box.minY;
-			zs[i]     = cz + rz;
-			xs[i + 4] = cx + rx;
-			ys[i + 4] = box.maxY;
-			zs[i + 4] = cz + rz;
-		}
-
-		// Project all 8 corners. If any is behind the camera we bail —
-		// drawing edges with one endpoint behind the near plane projects
-		// them to the wrong half of the screen.
-		Projection.Result[] projected = new Projection.Result[8];
-		for (int i = 0; i < 8; i++) {
-			projected[i] = Projection.project(xs[i], ys[i], zs[i]);
-			if (!projected[i].onScreen()) {
-				return;
-			}
-		}
-
-		int alpha = clampAlpha((int) brightness.get().doubleValue());
-		// Time-shifted phase so Rainbow/breathing palettes animate.
-		int[] palette = paletteColorsFor(color.get(), angle * 0.25f, alpha);
-		int colorBot = palette[0];
-		int colorTop = palette[1];
-		float thick = thickness.getFloat();
-
-		// Edge topology. Bottom ring and top ring each form a quad (4 edges).
-		// Vertical edges connect i (bottom) to i+4 (top).
-		int[][] bottomEdges   = { {0,1}, {1,3}, {3,2}, {2,0} };
-		int[][] topEdges      = { {4,5}, {5,7}, {7,6}, {6,4} };
-		int[][] verticalEdges = { {0,4}, {1,5}, {2,6}, {3,7} };
-
-		for (int[] e : bottomEdges) {
-			drawLine(matrix,
-				projected[e[0]].x(), projected[e[0]].y(),
-				projected[e[1]].x(), projected[e[1]].y(),
-				thick, colorBot, colorBot);
-		}
-		for (int[] e : topEdges) {
-			drawLine(matrix,
-				projected[e[0]].x(), projected[e[0]].y(),
-				projected[e[1]].x(), projected[e[1]].y(),
-				thick, colorTop, colorTop);
-		}
-		for (int[] e : verticalEdges) {
-			// e[0] = bottom corner, e[1] = top corner. Gradient bottom→top.
-			drawLine(matrix,
-				projected[e[0]].x(), projected[e[0]].y(),
-				projected[e[1]].x(), projected[e[1]].y(),
-				thick, colorBot, colorTop);
-		}
-	}
-
-	// =========================================================================
-	// Label (target2.png stretched to fit the entity's screen-space AABB)
+	// Label — orbital ghost trails of target2.png around the target
 	// =========================================================================
 
 	/**
-	 * Project the same 8 hitbox corners that {@link #renderCube} uses,
-	 * collapse them to a screen-space AABB, then stretch the label
-	 * texture to cover that box. The result is a billboarded sprite that
-	 * sits inside the player's silhouette and follows them through space
-	 * by exactly the same projection pipeline as Cube.
-	 *
-	 * <p>No corner-rotation around the vertical axis here on purpose:
-	 * the label is supposed to <em>stick</em> to the target like a logo,
-	 * not pulse with the cube's spin. The {@link #size} slider provides a
-	 * uniform scale around the AABB centre (50 = exact fit).
+	 * Adapted from the reference "Призраки" / "Ghosts" pattern: two trail
+	 * rings of {@link #LABEL_TRAIL_COUNT} copies orbit on the XZ plane —
+	 * one anchored just above the body centre, one just above the feet —
+	 * with a vertical sine bob so the trails rise and fall instead of
+	 * sliding flat. The rings rotate in opposite phase (offsets are
+	 * <code>+cos/+sin</code> vs <code>-cos/-sin</code>) which gives the
+	 * braided / "DNA helix" look you can see on cheats that use this
+	 * style. Each successive copy is slightly behind in time, slightly
+	 * smaller, and slightly more transparent.
 	 */
 	private void renderLabel(Matrix4f matrix, LivingEntity target, float tickDelta) {
-		Box box = lerpedHitbox(target, tickDelta);
-
-		double[][] corners = {
-			{ box.minX, box.minY, box.minZ }, { box.maxX, box.minY, box.minZ },
-			{ box.minX, box.maxY, box.minZ }, { box.maxX, box.maxY, box.minZ },
-			{ box.minX, box.minY, box.maxZ }, { box.maxX, box.minY, box.maxZ },
-			{ box.minX, box.maxY, box.maxZ }, { box.maxX, box.maxY, box.maxZ },
-		};
-
-		float minX = Float.POSITIVE_INFINITY, minY = Float.POSITIVE_INFINITY;
-		float maxX = Float.NEGATIVE_INFINITY, maxY = Float.NEGATIVE_INFINITY;
-		for (double[] c : corners) {
-			Projection.Result r = Projection.project(c[0], c[1], c[2]);
-			if (!r.onScreen()) {
-				return;
-			}
-			if (r.x() < minX) minX = r.x();
-			if (r.y() < minY) minY = r.y();
-			if (r.x() > maxX) maxX = r.x();
-			if (r.y() > maxY) maxY = r.y();
-		}
-
-		float boxW = maxX - minX;
-		float boxH = maxY - minY;
-		if (boxW < 2.0f || boxH < 2.0f) {
-			return;
-		}
-
 		AbstractTexture tex = MinecraftClient.getInstance().getTextureManager().getTexture(TEXTURE_LABEL);
 		if (tex == null) {
 			return;
 		}
 
-		// Uniform scale around the AABB centre. Default 45 → 0.9× (sits
-		// just inside the player), 50 = exact fit, 140 = ~2.8× for a
-		// poster-sized overlay.
-		float scale = size.getFloat() / 50.0f;
-		float cx = (minX + maxX) * 0.5f;
-		float cy = (minY + maxY) * 0.5f;
-		float w = boxW * scale;
-		float h = boxH * scale;
+		// Two orbit anchors: just above body centre and just above feet,
+		// matching the reference layout. Both use the lerped position so
+		// they stay glued to the target between ticks.
+		Vec3d lerped = target.getLerpedPos(tickDelta);
+		double upperX = lerped.x;
+		double upperY = lerped.y + target.getHeight() * 0.5 + 0.5;
+		double upperZ = lerped.z;
+		double lowerX = lerped.x;
+		double lowerY = lerped.y + 0.5;
+		double lowerZ = lerped.z;
 
-		// Same clamping idea as renderReticle: keep the label centre at
-		// least half-width inside the visible scaled-screen rectangle so
-		// it never partially hangs off the side. When the target drifts
-		// just past the viewport edge the projected AABB centre walks
-		// off the screen — without clamping the label would slide off
-		// with it. With clamping it stays anchored to the nearest edge.
-		// Falls back to mid-screen if the label is bigger than the
-		// viewport on an axis (clamp() handles inverted bounds).
+		// Time accumulator. Speed setting maps 0.5..9 onto a comfortable
+		// orbit rate — the /500 divisor mirrors the reference.
+		double speedF = speed.get();
+		double time = System.currentTimeMillis() / (500.0 / speedF);
+
+		float baseSize = size.getFloat();
+		int   baseAlpha = clampAlpha((int) brightness.get().doubleValue());
+		String palette = color.get();
+
 		Window window = MinecraftClient.getInstance().getWindow();
 		float sw = window.getScaledWidth();
 		float sh = window.getScaledHeight();
-		cx = clamp(cx, w * 0.5f, sw - w * 0.5f);
-		cy = clamp(cy, h * 0.5f, sh - h * 0.5f);
 
-		int alpha = clampAlpha((int) brightness.get().doubleValue());
-		QuadColorState quadColors = paletteFor(color.get(), currentAngle(), alpha);
+		for (int j = 0; j < LABEL_TRAIL_COUNT; j++) {
+			int trailAlpha = baseAlpha - j * LABEL_ALPHA_STEP;
+			if (trailAlpha <= 0) {
+				break; // remaining copies are fully transparent
+			}
+			float trailSize = baseSize * (1.0f - j * LABEL_SIZE_STEP);
+			if (trailSize < 1.0f) {
+				break; // tiny enough to skip
+			}
+
+			double trailTime = time - j * LABEL_TRAIL_STEP;
+			double trailSin  = Math.sin(trailTime);
+			double trailCos  = Math.cos(trailTime);
+			double bobY      = trailSin * LABEL_BOB_AMPLITUDE;
+			float  angleOffsetDeg = j * 7.2f;
+			float  half = trailSize * 0.5f;
+
+			// Upper ring: orbit centre = upper anchor, offset = +(cos, sin).
+			drawTrailSprite(matrix, tex, palette, trailAlpha, trailSize, half, sw, sh,
+				upperX + trailCos * LABEL_ORBIT_RADIUS,
+				upperY + bobY,
+				upperZ + trailSin * LABEL_ORBIT_RADIUS,
+				(float) Math.toRadians(trailSin * 360.0 + angleOffsetDeg));
+
+			// Lower ring: orbit centre = lower anchor, offset = -(cos, sin),
+			// rotation flipped in sign and shifted by 180° so the two rings
+			// counter-rotate and braid together.
+			drawTrailSprite(matrix, tex, palette, trailAlpha, trailSize, half, sw, sh,
+				lowerX - trailCos * LABEL_ORBIT_RADIUS,
+				lowerY + bobY,
+				lowerZ - trailSin * LABEL_ORBIT_RADIUS,
+				(float) Math.toRadians(-trailSin * 360.0 + 180.0 + angleOffsetDeg));
+		}
+	}
+
+	/**
+	 * Project a single trail world point, clamp the resulting screen
+	 * anchor inside the visible rectangle (so the sprite never drifts
+	 * past the viewport edge), then draw the rotated quad. Skips the
+	 * draw silently if the point is behind the camera.
+	 */
+	private static void drawTrailSprite(Matrix4f matrix, AbstractTexture tex, String palette,
+			int alpha, float spriteSize, float half, float sw, float sh,
+			double worldX, double worldY, double worldZ, float rotationRad) {
+		Projection.Result p = Projection.project(worldX, worldY, worldZ);
+		if (!p.onScreen()) {
+			return;
+		}
+
+		float gx = clamp(p.x(), half, sw - half);
+		float gy = clamp(p.y(), half, sh - half);
+
+		Matrix4f rotated = new Matrix4f(matrix)
+			.translate(gx, gy, 0.0f)
+			.rotateZ(rotationRad)
+			.translate(-gx, -gy, 0.0f);
+
+		QuadColorState corners = paletteFor(palette, rotationRad, alpha);
 
 		Builder.texture()
-			.size(new SizeState(w, h))
+			.size(new SizeState(spriteSize, spriteSize))
 			.radius(QuadRadiusState.NO_ROUND)
-			.color(quadColors)
+			.color(corners)
 			.smoothness(1.0f)
 			.texture(0.0f, 0.0f, 1.0f, 1.0f, tex)
 			.build()
-			.render(matrix, cx - w * 0.5f, cy - h * 0.5f);
-	}
-
-	// =========================================================================
-	// Drawing helpers
-	// =========================================================================
-
-	/**
-	 * Return {@code target}'s bounding box offset into its lerp-interpolated
-	 * position, so frames between ticks render the box at the visually
-	 * correct spot rather than the last full-tick snapshot.
-	 */
-	private static Box lerpedHitbox(LivingEntity target, float tickDelta) {
-		Vec3d lerped = target.getLerpedPos(tickDelta);
-		double dx = lerped.x - target.getX();
-		double dy = lerped.y - target.getY();
-		double dz = lerped.z - target.getZ();
-		return target.getBoundingBox().offset(dx, dy, dz);
-	}
-
-	/**
-	 * Draw a thin line from {@code (x1,y1)} to {@code (x2,y2)} as a rotated
-	 * rectangle. The rectangle's long axis is centred on the segment's
-	 * midpoint and rotated by atan2 of the delta — same trick the reticle
-	 * uses for its rotation, just scoped per-edge.
-	 *
-	 * @param colorStart colour of the vertices at {@code (x1,y1)}
-	 * @param colorEnd   colour of the vertices at {@code (x2,y2)}
-	 */
-	private static void drawLine(Matrix4f matrix,
-			float x1, float y1, float x2, float y2,
-			float thickness, int colorStart, int colorEnd) {
-		float dx = x2 - x1;
-		float dy = y2 - y1;
-		float length = (float) Math.sqrt(dx * dx + dy * dy);
-		if (length < 0.5f) {
-			return;
-		}
-		float angle = (float) Math.atan2(dy, dx);
-		float midX = (x1 + x2) * 0.5f;
-		float midY = (y1 + y2) * 0.5f;
-
-		Matrix4f rotated = new Matrix4f(matrix)
-			.translate(midX, midY, 0.0f)
-			.rotateZ(angle)
-			.translate(-midX, -midY, 0.0f);
-
-		// QuadColorState corners: (TL, BL, BR, TR). For a thin quad whose
-		// long axis runs from start to end after rotation, both "left"
-		// vertices are the start and both "right" vertices are the end —
-		// so the gradient goes start → end along the line.
-		QuadColorState colors = new QuadColorState(colorStart, colorStart, colorEnd, colorEnd);
-
-		Builder.rectangle()
-			.size(new SizeState(length, thickness))
-			.radius(QuadRadiusState.NO_ROUND)
-			.color(colors)
-			.smoothness(1.0f)
-			.build()
-			.render(rotated, midX - length * 0.5f, midY - thickness * 0.5f);
+			.render(rotated, gx - half, gy - half);
 	}
 
 	// =========================================================================
@@ -399,7 +271,8 @@ public final class TargetESP extends Module {
 
 	/**
 	 * Convert the configured speed (0.5..9) into a smooth radians-per-second
-	 * rotation rate, then return the current rotation angle in radians.
+	 * rotation rate, then return the current rotation angle in radians. Used
+	 * by {@link #renderCube} for its in-place spin.
 	 */
 	private float currentAngle() {
 		double s = speed.get();              // 0.5 .. 9
@@ -425,7 +298,7 @@ public final class TargetESP extends Module {
 
 	/**
 	 * Build the 4-corner gradient used to tint the texture. We slowly shift
-	 * the gradient with the current rotation so the reticle has subtle
+	 * the gradient with the current rotation so the sprite has subtle
 	 * "energy flow" instead of a static fill.
 	 *
 	 * <p>Corner order in {@link QuadColorState} (TL, BL, BR, TR) matches the
@@ -442,28 +315,6 @@ public final class TargetESP extends Module {
 			case "Rainbow":  return rainbow(alpha, phase);
 			case "Magenta":
 			default:         return gradient(0xFFEF6CFB, 0xFFC44CD8, alpha, phase);
-		}
-	}
-
-	/**
-	 * Two-colour palette pull used by the Cube mode (top/bottom stops). For
-	 * Rainbow we sample two opposite hues from the current phase so the
-	 * cube reads as a vertical gradient that animates over time.
-	 */
-	private static int[] paletteColorsFor(String mode, float phase, int alpha) {
-		switch (mode) {
-			case "Cyan":     return new int[] { withAlpha(0xFF60A5FA, alpha), withAlpha(0xFF22D3EE, alpha) };
-			case "Crimson":  return new int[] { withAlpha(0xFFB91C1C, alpha), withAlpha(0xFFEF4444, alpha) };
-			case "Lime":     return new int[] { withAlpha(0xFF22C55E, alpha), withAlpha(0xFFA3E635, alpha) };
-			case "Gold":     return new int[] { withAlpha(0xFFF59E0B, alpha), withAlpha(0xFFFCD34D, alpha) };
-			case "Rainbow":  {
-				float h = ((phase % 1.0f) + 1.0f) % 1.0f;
-				int c1 = withAlpha(hsv(h, 0.85f, 1.0f), alpha);
-				int c2 = withAlpha(hsv((h + 0.5f) % 1.0f, 0.85f, 1.0f), alpha);
-				return new int[] { c1, c2 };
-			}
-			case "Magenta":
-			default:         return new int[] { withAlpha(0xFFC44CD8, alpha), withAlpha(0xFFEF6CFB, alpha) };
 		}
 	}
 
