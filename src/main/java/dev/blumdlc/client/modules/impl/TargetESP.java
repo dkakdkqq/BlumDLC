@@ -43,6 +43,7 @@ public final class TargetESP extends Module {
 
 	private static final Identifier TEXTURE_CUBE  = Identifier.of("blumdlc", "textures/target.png");
 	private static final Identifier TEXTURE_LABEL = Identifier.of("blumdlc", "textures/target2.png");
+	private static final Identifier TEXTURE_SOULS = Identifier.of("blumdlc", "textures/target3.png");
 
 	/** Number of trail copies stacked behind the lead sprite in Label mode. */
 	private static final int   LABEL_TRAIL_COUNT  = 40;
@@ -69,12 +70,12 @@ public final class TargetESP extends Module {
 		super("TargetESP", "Marks the entity AttackAura is locked onto", Category.RENDER);
 		this.attackAura = attackAura;
 
-		this.mode       = new ModeSetting("Mode", "Cube", "Cube", "Label");
+		this.mode       = new ModeSetting("Mode", "Cube", "Cube", "Label", "Souls");
 		this.size       = new NumberSetting("Size",        45.0,  10.0, 140.0, 1.0);
 		this.speed      = new NumberSetting("Speed",        3.0,   0.5,   9.0, 0.1);
 		this.brightness = new NumberSetting("Brightness", 220.0,  20.0, 255.0, 1.0);
 		this.color      = new ModeSetting("Color", "Magenta",
-			"Magenta", "Cyan", "Crimson", "Lime", "Gold", "Rainbow");
+			"Magenta", "Cyan", "Crimson", "Lime", "Gold", "Violet", "Aqua", "Sunset", "Ice", "Rainbow");
 
 		addSetting(this.mode);
 		addSetting(this.size);
@@ -95,6 +96,7 @@ public final class TargetESP extends Module {
 
 		switch (mode.get()) {
 			case "Label" -> renderLabel(matrix, target, tickDelta);
+			case "Souls" -> renderSouls(matrix, target, tickDelta);
 			default      -> renderCube(matrix, target, tickDelta); // "Cube" + safety net
 		}
 	}
@@ -231,6 +233,59 @@ public final class TargetESP extends Module {
 		}
 	}
 
+	// =========================================================================
+	// Souls — rotating target3.png sprite at the target's body centre
+	// =========================================================================
+
+	/**
+	 * Same rotating-texture-on-body-centre approach as Cube, but uses
+	 * {@code target3.png}. Gives a distinct "soul" visual alternative.
+	 */
+	private void renderSouls(Matrix4f matrix, LivingEntity target, float tickDelta) {
+		Vec3d pos = target.getLerpedPos(tickDelta);
+		double anchorY = pos.y + target.getHeight() * 0.5;
+		Projection.Result projected = Projection.project(pos.x, anchorY, pos.z);
+		if (!projected.onScreen()) {
+			return;
+		}
+
+		AbstractTexture tex = MinecraftClient.getInstance().getTextureManager().getTexture(TEXTURE_SOULS);
+		if (tex == null) {
+			return;
+		}
+
+		float boxSize = size.getFloat();
+		float angle = currentAngle();
+
+		Window window = MinecraftClient.getInstance().getWindow();
+		float sw = window.getScaledWidth();
+		float sh = window.getScaledHeight();
+		float half = boxSize * 0.5f;
+		float px = clamp(projected.x(), half, sw - half);
+		float py = clamp(projected.y(), half, sh - half);
+
+		Matrix4f rotated = new Matrix4f(matrix)
+			.translate(px, py, 0.0f)
+			.rotateZ(angle)
+			.translate(-px, -py, 0.0f);
+
+		int alpha = clampAlpha((int) brightness.get().doubleValue());
+		QuadColorState corners = paletteFor(color.get(), angle, alpha);
+
+		Builder.texture()
+			.size(new SizeState(boxSize, boxSize))
+			.radius(QuadRadiusState.NO_ROUND)
+			.color(corners)
+			.smoothness(1.0f)
+			.texture(0.0f, 0.0f, 1.0f, 1.0f, tex)
+			.build()
+			.render(rotated, px - boxSize * 0.5f, py - boxSize * 0.5f);
+	}
+
+	// =========================================================================
+	// Trail drawing helper (used by Label)
+	// =========================================================================
+
 	/**
 	 * Project a single trail world point, clamp the resulting screen
 	 * anchor inside the visible rectangle (so the sprite never drifts
@@ -312,6 +367,10 @@ public final class TargetESP extends Module {
 			case "Crimson":  return gradient(0xFFEF4444, 0xFFB91C1C, alpha, phase);
 			case "Lime":     return gradient(0xFFA3E635, 0xFF22C55E, alpha, phase);
 			case "Gold":     return gradient(0xFFFCD34D, 0xFFF59E0B, alpha, phase);
+			case "Violet":   return gradient(0xFF8B5CF6, 0xFF6D28D9, alpha, phase);
+			case "Aqua":     return gradient(0xFF06B6D4, 0xFF0891B2, alpha, phase);
+			case "Sunset":   return gradient(0xFFF97316, 0xFFDB2777, alpha, phase);
+			case "Ice":      return gradient(0xFFBAE6FD, 0xFF7DD3FC, alpha, phase);
 			case "Rainbow":  return rainbow(alpha, phase);
 			case "Magenta":
 			default:         return gradient(0xFFEF6CFB, 0xFFC44CD8, alpha, phase);
